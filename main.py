@@ -1,7 +1,9 @@
 import pygame as game
 from math import dist
 import numpy as np
-
+from collections import deque
+from itertools import pairwise
+from sympy.geometry.point import Point2D
 
 # Constants
 WND_WIDTH = 900
@@ -10,7 +12,7 @@ WND_CENTER = (WND_WIDTH/2, WND_HEIGHT/2)
 GAME_NAME = "Drawl Stars"
 PLAYER_SPEED = 5
 BULLET_SPEED = 0.4
-BULLET_SIZE = 50
+BULLET_LENGTH = 50
 WALL_MAX_LENGTH = 120
 WALL_COLOR_INACTIVE = (150, 150, 150)
 WALL_COLOR_ACTIVE = (165, 42, 42)
@@ -19,7 +21,7 @@ WALL_COLOR_ACTIVE = (165, 42, 42)
 # Classes
 class Player(game.sprite.Sprite):
     def __init__(self, start_pos):
-        game.sprite.Sprite.__init__(self)
+        super().__init__()
         self.movement = {'x': 0, 'y': 0}
         self.image = game.image.load('graphics/player1.png')
         self.rect = self.image.get_rect(center=start_pos)
@@ -51,11 +53,11 @@ class Player(game.sprite.Sprite):
 
 
 class Bullet(game.sprite.Sprite):
-    def __init__(self, a, b):
-        game.sprite.Sprite.__init__(self)
-        self.origin = np.array(a, dtype=float)
-        self.vector = np.array([b[0]-a[0], b[1]-a[1]], dtype=float)
-        self.vector = self.vector * BULLET_SIZE / np.linalg.norm(self.vector)
+    def __init__(self, origin: tuple[int, int], target: tuple[int, int]):
+        super().__init__()
+        self.origin = np.array(origin, dtype=float)
+        self.vector = np.array([origin[0]-target[0], origin[1]-target[1]], dtype=float)
+        self.vector = self.vector * BULLET_LENGTH / np.linalg.norm(self.vector)
         sound_pew.play()
 
     def update(self):
@@ -72,105 +74,89 @@ class Bullet(game.sprite.Sprite):
         pass
 
 
+class WallNode:
+    """A 2d point that will be connected to other wall nodes with lines to form a dynamically drawable wall.
+    Distance to next wall node is stored to avoid having to calculate it twice when 1.adding and 2.deleting this node"""
+    def __init__(self, pos: tuple[int, int]):
+        self.pos = pos
+        self.dist_to_next = 0.0
+
+    @property
+    def x(self):
+        return self.pos[0]
+
+    @property
+    def y(self):
+        return self.pos[1]
+
+
+# TODO: fix bug where a straight wall ignores collision
 class Wall(game.sprite.Sprite):
     def __init__(self):
-        game.sprite.Sprite.__init__(self)
-        self.head = None
-        self.tail = None
-        self.n = 0
-        self.length = 0.0
+        super().__init__()
+        self.nodes = deque()
+        self.total_length = 0.0
         self.active = False
         self.rect = game.rect.Rect(0, 0, 0, 0)
 
-    def append(self, pos):
-        new_node = WallNode(pos)
-        if self.tail:
-            self.tail.dist_to_next = dist(pos, self.tail.pos)
-            self.length += self.tail.dist_to_next
-            self.tail.next = new_node
-            new_node.prev = self.tail
-            self.tail = new_node
-        else:
-            self.head = new_node
-            self.tail = new_node
-        self.n += 1
-        while self.length > WALL_MAX_LENGTH:
-            self.pop()
+    def append(self, new_node: WallNode):
+        if len(self.nodes):
+            self.nodes[-1].dist_to_next = dist(self.nodes[-1].pos, new_node.pos)
+            self.total_length += self.nodes[-1].dist_to_next
+        self.nodes.append(new_node)
 
-    def pop(self):
-        if self.head:
-            if self.head is self.tail:
-                self.head = None
-                self.tail = None
-                self.length = 0
-            else:
-                self.length -= self.head.dist_to_next
-                self.head = self.head.next
-                self.head.prev = None
-            self.n -= 1
+        while self.total_length > WALL_MAX_LENGTH:
+            self.total_length -= self.nodes[0].dist_to_next
+            self.nodes.popleft()
 
     def clear(self):
+        self.nodes.clear()
         self.active = False
-        self.rect = game.rect.Rect(0, 0, 0, 0)
-        while self.head:
-            self.pop()
+        self.total_length = 0.0
+        self.rect.update(0, 0, 0, 0)
 
+    # TODO: check for redundancy in event loop
     def update(self):
+        if len(self.nodes) == 0:
+            return
         color = WALL_COLOR_ACTIVE if self.active else WALL_COLOR_INACTIVE
-        if self.head:
-            if self.n == 1:
-                game.draw.circle(screen, color=color, center=self.head.pos, radius=3)
-            else:
-                pt = self.head
-                while pt.next:
-                    game.draw.line(screen, color=color, start_pos=pt.pos, end_pos=pt.next.pos, width=7)
-                    pt = pt.next
+        if len(self.nodes) == 1:
+            game.draw.circle(screen, color=color, center=self.nodes[0].pos, radius=3)
+        else:
+            for node1, node2 in pairwise(self.nodes):
+                game.draw.line(screen, color=color, start_pos=node1.pos, end_pos=node2.pos, width=7)
 
+    # TODO: check this for bugs and event loop for redundancy
     def get_rect(self):
-        if self.n < 2:
+        if len(self.nodes) < 2:
             return game.rect.Rect(0, 0, 0, 0)
-        min_x, min_y = WND_WIDTH, WND_HEIGHT
-        max_x, max_y = 0, 0
-        pt = self.head
-        while pt:
-            min_x = min(min_x, pt.pos[0])
-            min_y = min(min_y, pt.pos[1])
-            max_x = max(max_x, pt.pos[0])
-            max_y = max(max_y, pt.pos[1])
-            pt = pt.next
-        return game.rect.Rect(min_x, min_y, max_x-min_x, max_y-min_y)
+
+        min_x = min(node.x for node in self.nodes)
+        min_y = min(node.y for node in self.nodes)
+        max_x = max(node.x for node in self.nodes)
+        max_y = max(node.y for node in self.nodes)
+        return game.rect.Rect(min_x, min_y, max_x - min_x, max_y - min_y)
 
     def check_collision_rect(self, rect):
         if not self.active:
             return False
         if not self.rect.colliderect(rect):
             return False
-        pt = self.head
-        while pt.next:
-            if rect.clipline(pt.pos, pt.next.pos):
+        for node1, node2 in pairwise(self.nodes):
+            if rect.clipline(node1.pos, node2.pos):
                 return True
-            pt = pt.next
         return False
 
+    # TODO: check intersection using sympy
     def check_collision_line(self, a, b):
         if not self.active:
             return False
         if not self.rect.clipline(a, b):
             return False
-        pt = self.head
-        while pt.next:
-            if intersect(a, b, pt.pos, pt.next.pos):
+        for node1, node2 in pairwise(self.nodes):
+            if intersect(a, b, node1.pos, node2.pos):
                 return True
-            pt = pt.next
         return False
-
-
-class WallNode:
-    def __init__(self, pos, next=None, prev=None):
-        self.pos = pos
-        self.next = next
-        self.prev = prev
-        self.dist_to_next = 0
 
 
 def ccw(a, b, c):
@@ -232,21 +218,21 @@ while True:
 
         elif event.type == game.MOUSEBUTTONDOWN:
             if event.button == 1:
-                drawing = True
                 wall.clear()
-                wall.append(event.pos)
+                drawing = True
+                wall.append(WallNode(event.pos))
             elif event.button == 3:
                 player.shoot(event.pos)
 
         elif event.type == game.MOUSEMOTION and drawing:
-            wall.append(event.pos)
+            wall.append(WallNode(event.pos))
 
         elif event.type == game.MOUSEBUTTONUP:
             if event.button == 1 and drawing:
                 drawing = False
                 wall.active = True
-                wall.rect = wall.get_rect()
-                if wall.n == 1 or wall.check_collision_rect(player.rect):
+                wall.rect.update(wall.get_rect())
+                if len(wall.nodes) == 1 or wall.check_collision_rect(player.rect):
                     wall.clear()
 
         elif event.type == game.WINDOWLEAVE and drawing:
@@ -265,6 +251,3 @@ while True:
     entities.update()
     game.display.update()
     clock.tick(60)
-
-
-# TODO: fix bug where a straight wall ignores collision
