@@ -1,35 +1,40 @@
 import pygame as game
+from sys import exit
 from math import dist
 import numpy as np
 from collections import deque
 from itertools import pairwise
-from sympy.geometry.point import Point2D
 
 # Constants
 WND_WIDTH = 900
 WND_HEIGHT = 700
-WND_CENTER = (WND_WIDTH/2, WND_HEIGHT/2)
-GAME_NAME = "Drawl Stars"
+WND_CENTER = (WND_WIDTH//2, WND_HEIGHT//2)
+GAME_TITLE = "Drawl Stars"
 PLAYER_SPEED = 5
 BULLET_SPEED = 0.4
 BULLET_LENGTH = 50
-WALL_MAX_LENGTH = 120
+WALL_MAX_LENGTH = 140
 WALL_COLOR_INACTIVE = (150, 150, 150)
 WALL_COLOR_ACTIVE = (165, 42, 42)
 
 
 # Classes
 class Player(game.sprite.Sprite):
-    def __init__(self, start_pos):
+    def __init__(self, spawn_pos: tuple[int, int]):
         super().__init__()
-        self.movement = {'x': 0, 'y': 0}
+        self.movement_vector = np.array([0, 0])
+        self.is_drawing = False
         self.image = game.image.load('graphics/player1.png')
-        self.rect = self.image.get_rect(center=start_pos)
+        self.rect = self.image.get_rect(center=spawn_pos)
 
     def update(self):
-        self.rect.x += self.movement['x']
-        self.rect.y += self.movement['y']
+        # process keyboard input
+        keys_state = game.key.get_pressed()
+        self.movement_vector[0] = PLAYER_SPEED * (keys_state[game.K_d] - keys_state[game.K_a])
+        self.movement_vector[1] = PLAYER_SPEED * (keys_state[game.K_s] - keys_state[game.K_w])
+        self.rect.move_ip(self.movement_vector)
 
+        # check if player is out of bounds
         if self.rect.bottom > WND_HEIGHT:
             self.rect.bottom = WND_HEIGHT
         if self.rect.top < 0:
@@ -39,17 +44,15 @@ class Player(game.sprite.Sprite):
         if self.rect.left < 0:
             self.rect.left = 0
 
-        for entity in entities:
-            if type(entity) == Wall:
-                if entity.check_collision_rect(self.rect):
-                    self.rect.x -= self.movement['x']
-                    self.rect.y -= self.movement['y']
+        # check collision TODO
+        if wall.check_collision_rect(self.rect):
+            self.rect.move_ip(-self.movement_vector)
+
+    def draw(self, surface):
+        surface.blit(self.image, self.rect)
 
     def shoot(self, pos):
         entities.add(Bullet(self.rect.center, pos))
-
-    def check_collision(self):
-        pass
 
 
 class Bullet(game.sprite.Sprite):
@@ -75,8 +78,8 @@ class Bullet(game.sprite.Sprite):
 
 
 class WallNode:
-    """A 2d point that will be connected to other wall nodes with lines to form a dynamically drawable wall.
-    Distance to next wall node is stored to avoid having to calculate it twice when 1.adding and 2.deleting this node"""
+    """A 2D point that will be connected to other wall nodes with lines to form a dynamically drawable wall.
+    Distance to next node is stored to avoid having to calculate it twice when adding and later deleting this node"""
     def __init__(self, pos: tuple[int, int]):
         self.pos = pos
         self.dist_to_next = 0.0
@@ -90,13 +93,15 @@ class WallNode:
         return self.pos[1]
 
 
-# TODO: fix bug where a straight wall ignores collision
 class Wall(game.sprite.Sprite):
+    """In-game object consisting of nodes connected by lines. As the player draws, nodes get added to one side
+    and deleted from another forming a line of set max length that follows their cursor. Thus, nodes are stored in
+    a deque for fast appends and pops"""
     def __init__(self):
         super().__init__()
         self.nodes = deque()
         self.total_length = 0.0
-        self.active = False
+        self.is_active = False
         self.rect = game.rect.Rect(0, 0, 0, 0)
 
     def append(self, new_node: WallNode):
@@ -104,14 +109,13 @@ class Wall(game.sprite.Sprite):
             self.nodes[-1].dist_to_next = dist(self.nodes[-1].pos, new_node.pos)
             self.total_length += self.nodes[-1].dist_to_next
         self.nodes.append(new_node)
-
         while self.total_length > WALL_MAX_LENGTH:
             self.total_length -= self.nodes[0].dist_to_next
             self.nodes.popleft()
 
     def clear(self):
         self.nodes.clear()
-        self.active = False
+        self.is_active = False
         self.total_length = 0.0
         self.rect.update(0, 0, 0, 0)
 
@@ -119,7 +123,7 @@ class Wall(game.sprite.Sprite):
     def update(self):
         if len(self.nodes) == 0:
             return
-        color = WALL_COLOR_ACTIVE if self.active else WALL_COLOR_INACTIVE
+        color = WALL_COLOR_ACTIVE if self.is_active else WALL_COLOR_INACTIVE
         if len(self.nodes) == 1:
             game.draw.circle(screen, color=color, center=self.nodes[0].pos, radius=3)
         else:
@@ -135,13 +139,11 @@ class Wall(game.sprite.Sprite):
         min_y = min(node.y for node in self.nodes)
         max_x = max(node.x for node in self.nodes)
         max_y = max(node.y for node in self.nodes)
-        return game.rect.Rect(min_x, min_y, max_x - min_x, max_y - min_y)
+        return game.rect.Rect(min_x-1, min_y-1, max_x - min_x + 1, max_y - min_y + 1)
 
     def check_collision_rect(self, rect):
-        if not self.active:
-            return False
-        if not self.rect.colliderect(rect):
-            return False
+        if not self.is_active: return False
+        if not self.rect.colliderect(rect): return False
         for node1, node2 in pairwise(self.nodes):
             if rect.clipline(node1.pos, node2.pos):
                 return True
@@ -149,7 +151,7 @@ class Wall(game.sprite.Sprite):
 
     # TODO: check intersection using sympy
     def check_collision_line(self, a, b):
-        if not self.active:
+        if not self.is_active:
             return False
         if not self.rect.clipline(a, b):
             return False
@@ -175,14 +177,13 @@ font = game.font.Font('Fonts/Pixeltype.ttf', 40)
 sound_pew = game.mixer.Sound('Sounds/pew.wav')
 sound_break = game.mixer.Sound('Sounds/break.wav')
 screen = game.display.set_mode(size=(WND_WIDTH, WND_HEIGHT))
-game.display.set_caption(GAME_NAME)
+game.display.set_caption(GAME_TITLE)
 
-running = True
-drawing = False
 wall = Wall()
 player = Player(WND_CENTER)
 entities = game.sprite.Group()
-entities.add(player, wall)
+entities.add(wall)
+
 
 # Game Loop
 while True:
@@ -190,64 +191,44 @@ while True:
 
     for event in game.event.get():
         if event.type == game.QUIT:
-            running = False
             game.quit()
-            break
+            exit()
 
         elif event.type == game.KEYDOWN:
-            if event.key == game.K_w:
-                player.movement['y'] -= PLAYER_SPEED
-            elif event.key == game.K_a:
-                player.movement['x'] -= PLAYER_SPEED
-            elif event.key == game.K_s:
-                player.movement['y'] += PLAYER_SPEED
-            elif event.key == game.K_d:
-                player.movement['x'] += PLAYER_SPEED
-            elif event.key == game.K_ESCAPE:
+            if event.key == game.K_ESCAPE:
                 game.event.post(game.event.Event(game.QUIT))
-
-        elif event.type == game.KEYUP:
-            if event.key == game.K_w:
-                player.movement['y'] += PLAYER_SPEED
-            elif event.key == game.K_a:
-                player.movement['x'] += PLAYER_SPEED
-            elif event.key == game.K_s:
-                player.movement['y'] -= PLAYER_SPEED
-            elif event.key == game.K_d:
-                player.movement['x'] -= PLAYER_SPEED
 
         elif event.type == game.MOUSEBUTTONDOWN:
             if event.button == 1:
                 wall.clear()
-                drawing = True
+                player.is_drawing = True
                 wall.append(WallNode(event.pos))
             elif event.button == 3:
                 player.shoot(event.pos)
 
-        elif event.type == game.MOUSEMOTION and drawing:
+        elif event.type == game.MOUSEMOTION and player.is_drawing:
             wall.append(WallNode(event.pos))
 
         elif event.type == game.MOUSEBUTTONUP:
-            if event.button == 1 and drawing:
-                drawing = False
-                wall.active = True
+            if event.button == 1 and player.is_drawing:
+                player.is_drawing = False
+                wall.is_active = True  # TODO handle activation and wall color inside wall class?
                 wall.rect.update(wall.get_rect())
                 if len(wall.nodes) == 1 or wall.check_collision_rect(player.rect):
                     wall.clear()
 
-        elif event.type == game.WINDOWLEAVE and drawing:
-            drawing = False
+        elif event.type == game.WINDOWLEAVE and player.is_drawing:
+            player.is_drawing = False
             wall.clear()
-
-    if not running:
-        break
 
     fps_surf = font.render(f'{int(clock.get_fps())}', False, 'black')
     fps_rect = fps_surf.get_rect(topleft=(0, 0))
     screen.blit(fps_surf, fps_rect)
 
-    screen.blit(player.image, player.rect)
-
+    player.update()
+    player.draw(screen)
     entities.update()
+
+    # entities.update()
     game.display.update()
     clock.tick(60)
