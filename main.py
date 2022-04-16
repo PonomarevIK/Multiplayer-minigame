@@ -4,18 +4,7 @@ from math import dist
 import numpy as np
 from collections import deque
 from itertools import pairwise
-
-# Constants
-WND_WIDTH = 900
-WND_HEIGHT = 700
-WND_CENTER = (WND_WIDTH//2, WND_HEIGHT//2)
-GAME_TITLE = "Drawl Stars"
-PLAYER_SPEED = 5
-BULLET_SPEED = 0.4
-BULLET_LENGTH = 50
-WALL_MAX_LENGTH = 140
-WALL_COLOR_INACTIVE = (150, 150, 150)
-WALL_COLOR_ACTIVE = (165, 42, 42)
+from constants import *
 
 
 # Classes
@@ -51,8 +40,8 @@ class Player(game.sprite.Sprite):
     def draw(self, surface):
         surface.blit(self.image, self.rect)
 
-    def shoot(self, pos):
-        entities.add(Bullet(self.rect.center, pos))
+    def shoot(self, target: tuple[int, int]):
+        entities.add(Bullet(self.rect.center, target))
 
 
 class Bullet(game.sprite.Sprite):
@@ -61,7 +50,7 @@ class Bullet(game.sprite.Sprite):
         self.origin = np.array(origin, dtype=float)
         self.vector = np.array([origin[0]-target[0], origin[1]-target[1]], dtype=float)
         self.vector = self.vector * BULLET_LENGTH / np.linalg.norm(self.vector)
-        sound_pew.play()
+        sounds["pew"].play()
 
     def update(self):
         game.draw.line(screen, color='red', start_pos=self.origin, end_pos=self.origin+self.vector, width=7)
@@ -69,7 +58,7 @@ class Bullet(game.sprite.Sprite):
         if not screen.get_rect().collidepoint(tuple(self.origin)):
             self.kill()
         if wall.check_collision_line(tuple(self.origin), tuple(self.origin+self.vector)):
-            sound_break.play()
+            sounds["break"].play()
             self.kill()
             wall.clear()
 
@@ -142,8 +131,10 @@ class Wall(game.sprite.Sprite):
         return game.rect.Rect(min_x-1, min_y-1, max_x - min_x + 1, max_y - min_y + 1)
 
     def check_collision_rect(self, rect):
-        if not self.is_active: return False
-        if not self.rect.colliderect(rect): return False
+        if not self.is_active:
+            return False
+        if not self.rect.colliderect(rect):
+            return False
         for node1, node2 in pairwise(self.nodes):
             if rect.clipline(node1.pos, node2.pos):
                 return True
@@ -174,8 +165,8 @@ def intersect(a, b, c, d):
 game.init()
 clock = game.time.Clock()
 font = game.font.Font('Fonts/Pixeltype.ttf', 40)
-sound_pew = game.mixer.Sound('Sounds/pew.wav')
-sound_break = game.mixer.Sound('Sounds/break.wav')
+sounds = {"pew":game.mixer.Sound('Sounds/pew.wav'),
+          "break": game.mixer.Sound('Sounds/break.wav')}
 screen = game.display.set_mode(size=(WND_WIDTH, WND_HEIGHT))
 game.display.set_caption(GAME_TITLE)
 
@@ -229,6 +220,5 @@ while True:
     player.draw(screen)
     entities.update()
 
-    # entities.update()
     game.display.update()
     clock.tick(60)
