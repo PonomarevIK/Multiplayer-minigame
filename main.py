@@ -59,9 +59,8 @@ class Bullet(game.sprite.Sprite):
         if not screen.get_rect().collidepoint(tuple(self.origin)):
             self.kill()
         if wall.check_collision_line(tuple(self.origin), tuple(self.origin+self.vector)):
-            sounds["wall_break"].play()
             self.kill()
-            wall.clear()
+            wall.take_damage()
 
     def check_collision(self, rect):
         pass
@@ -91,6 +90,7 @@ class Wall(game.sprite.Sprite):
         super().__init__()
         self.nodes = deque()
         self.total_length = 0.
+        self.health = 3
         self.is_active = False
         self.drawing_mode = False
 
@@ -106,8 +106,18 @@ class Wall(game.sprite.Sprite):
     def clear(self):
         self.nodes.clear()
         self.is_active = False
+        self.drawing_mode = False
         self.total_length = 0.
+        self.health = 3
         # self.rect.update(0, 0, 0, 0)
+
+    def take_damage(self):
+        self.health -= 1
+        if self.health > 0:
+            sounds["wall_hit"].play()
+        else:
+            sounds["wall_break"].play()
+            self.clear()
 
     def activate(self):
         self.drawing_mode = False
@@ -172,6 +182,7 @@ wall = Wall()
 player = Player(WND_CENTER)
 
 bullets = game.sprite.Group()
+walls = game.sprite.Group()
 
 
 # Game Loop
@@ -203,7 +214,6 @@ while True:
                 wall.activate()
 
         elif event.type == game.WINDOWLEAVE and wall.drawing_mode:
-            wall.drawing_mode = False
             wall.clear()
 
     fps_surf = font.render(f'{int(clock.get_fps())}', False, 'black')
