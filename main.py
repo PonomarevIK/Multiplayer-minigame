@@ -48,7 +48,7 @@ class Bullet(game.sprite.Sprite):
     def __init__(self, origin: tuple[int, int], target: tuple[int, int]):
         super().__init__()
         self.origin = np.array(origin, dtype=float)
-        self.vector = np.array([origin[0]-target[0], origin[1]-target[1]], dtype=float)
+        self.vector = np.array([target[0]-origin[0], target[1]-origin[1]], dtype=float)
         self.vector = self.vector * BULLET_LENGTH / np.linalg.norm(self.vector)
         sounds["pew"].play()
 
@@ -58,7 +58,7 @@ class Bullet(game.sprite.Sprite):
         if not screen.get_rect().collidepoint(tuple(self.origin)):
             self.kill()
         if wall.check_collision_line(tuple(self.origin), tuple(self.origin+self.vector)):
-            sounds["break"].play()
+            sounds["wall_break"].play()
             self.kill()
             wall.clear()
 
@@ -152,21 +152,20 @@ class Wall(game.sprite.Sprite):
         return False
 
 
-def ccw(a, b, c):
-    return (c[1] - a[1]) * (b[0] - a[0]) > (b[1] - a[1]) * (c[0] - a[0])
-
-
 # Return true if line segments AB and CD intersect
 def intersect(a, b, c, d):
+    def ccw(m, n, k):
+        return (k[1] - m[1]) * (n[0] - m[0]) > (n[1] - m[1]) * (k[0] - m[0])
     return ccw(a, c, d) != ccw(b, c, d) and ccw(a, b, c) != ccw(a, b, d)
 
 
 # Initialisation
 game.init()
 clock = game.time.Clock()
-font = game.font.Font('Fonts/Pixeltype.ttf', 40)
-sounds = {"pew":game.mixer.Sound('Sounds/pew.wav'),
-          "break": game.mixer.Sound('Sounds/break.wav')}
+font = game.font.Font("Fonts/Pixeltype.ttf", 40)
+sounds = {"pew": game.mixer.Sound("Sounds/pew.wav"),
+          "wall_hit": game.mixer.Sound("Sounds/wall_hit.wav"),
+          "wall_break": game.mixer.Sound("Sounds/wall_break.wav")}
 screen = game.display.set_mode(size=(WND_WIDTH, WND_HEIGHT))
 game.display.set_caption(GAME_TITLE)
 
