@@ -172,10 +172,6 @@ class Wall(game.sprite.Sprite):
         return False
 
 
-def check_collision(sprite1, sprite2) -> bool:
-    pass  # TODO
-
-
 # Return true if line segments AB and CD intersect
 def intersect(a, b, c, d) -> bool:
     def ccw(m, n, k):
@@ -200,6 +196,8 @@ player = Player(WND_CENTER)
 players = game.sprite.Group(player)
 bullets = game.sprite.Group()
 walls = game.sprite.Group()
+
+heart = game.image.load("Graphics/heart.png")
 
 
 # Game Loop
@@ -236,10 +234,16 @@ while True:
             if wall and wall.drawing_mode:
                 wall.kill()
 
+    # fps display
     fps_surf = font.render(f'{int(clock.get_fps())}', False, 'black')
     fps_rect = fps_surf.get_rect(topleft=(0, 0))
     screen.blit(fps_surf, fps_rect)
 
+    # health display
+    for i in range(player.health):
+        screen.blit(heart, heart.get_rect(topright=(WND_WIDTH - i * heart.get_width(), 0)))
+
+    # update all entities
     players.update()
     players.draw(screen)
     bullets.update()
