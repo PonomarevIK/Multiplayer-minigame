@@ -191,7 +191,8 @@ font = game.font.Font("Fonts/Pixeltype.ttf", 40)
 sounds = {"pew": game.mixer.Sound("Sounds/pew.wav"),
           "wall_hit": game.mixer.Sound("Sounds/wall_hit.wav"),
           "wall_break": game.mixer.Sound("Sounds/wall_break.wav"),
-          "player_damage": game.mixer.Sound("Sounds/player_damage.wav")}
+          "player_damage": game.mixer.Sound("Sounds/player_damage.wav")
+          }
 spawn_positions = [(100, 100), (WND_WIDTH-100, WND_HEIGHT-100), (100, WND_HEIGHT-100), (WND_WIDTH-100, 100)]
 screen = game.display.set_mode(size=(WND_WIDTH, WND_HEIGHT))
 game.display.set_caption(GAME_TITLE)
