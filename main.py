@@ -1,5 +1,4 @@
 import pygame as game
-from sys import exit
 import math
 import numpy as np
 from collections import deque
@@ -51,34 +50,39 @@ class Player(game.sprite.Sprite):
 
     def take_damage(self):
         self.health -= 1
+        sounds["player_damage"].play()
         if not self.is_alive:
             self.kill()
 
     def shoot(self, target: tuple[int, int]):
-        if self.bullet_cooldown == 0:
+        if (self.bullet_cooldown == 0) and (target != self.rect.center):
+                                            # rare edge case
             self.bullet_cooldown = BULLET_COOLDOWN
             bullets.add(Bullet(self.rect.center, target))
 
 
 class Bullet(game.sprite.Sprite):
-    def __init__(self, origin: tuple[int, int], target: tuple[int, int]):
+    def __init__(self, origin: tuple[int, int], target: tuple[int, int], hostile=False):
         super().__init__()
         self.origin = np.array(origin, dtype=float)
         self.vector = np.array([target[0]-origin[0], target[1]-origin[1]], dtype=float)
         self.vector = self.vector * BULLET_LENGTH / np.linalg.norm(self.vector)
-        self.hostile = False
+        self.hostile = hostile
+        self.color = 'green'
         sounds["pew"].play()
 
     def update(self):
-        game.draw.line(screen, color='red', start_pos=self.origin, end_pos=self.origin+self.vector, width=7)
+        game.draw.line(screen, color=self.color, start_pos=self.origin, end_pos=self.origin+self.vector, width=7)
         self.origin += BULLET_SPEED * self.vector
         if not screen.get_rect().collidepoint(tuple(self.origin)):
             self.kill()
         for wall_iter in walls:
+            # upon hitting a wall bullet bounces and becomes hostile - now it can also damage the shooter
             if wall_iter.check_collision_line(tuple(self.origin), tuple(self.origin+self.vector)):
                 wall_iter.take_damage()
                 self.vector = -self.vector
                 self.hostile = True
+                self.color = 'red'
         for player_iter in players:
             if self. hostile and player_iter.rect.clipline(self.origin, self.origin+self.vector):
                 self.kill()
@@ -181,17 +185,20 @@ def intersect(a, b, c, d) -> bool:
 
 # Initialisation
 game.init()
+running = True
 clock = game.time.Clock()
 font = game.font.Font("Fonts/Pixeltype.ttf", 40)
 sounds = {"pew": game.mixer.Sound("Sounds/pew.wav"),
           "wall_hit": game.mixer.Sound("Sounds/wall_hit.wav"),
-          "wall_break": game.mixer.Sound("Sounds/wall_break.wav")
+          "wall_break": game.mixer.Sound("Sounds/wall_break.wav"),
+          "player_damage": game.mixer.Sound("Sounds/player_damage.wav")
           }
+spawn_positions = [(100, 100), (WND_WIDTH-100, WND_HEIGHT-100), (100, WND_HEIGHT-100), (WND_WIDTH-100, 100)]
 screen = game.display.set_mode(size=(WND_WIDTH, WND_HEIGHT))
 game.display.set_caption(GAME_TITLE)
 
 wall = None
-player = Player(WND_CENTER)
+player = Player(spawn_positions[0])
 
 players = game.sprite.Group(player)
 bullets = game.sprite.Group()
@@ -201,13 +208,12 @@ heart = game.image.load("Graphics/heart.png")
 
 
 # Game Loop
-while True:
+while running:
     screen.fill('white')
 
     for event in game.event.get():
         if event.type == game.QUIT:
-            game.quit()
-            exit()
+            running = False
 
         elif event.type == game.KEYDOWN:
             if event.key == game.K_ESCAPE:
@@ -251,3 +257,6 @@ while True:
 
     game.display.update()
     clock.tick(60)
+
+
+game.quit()
