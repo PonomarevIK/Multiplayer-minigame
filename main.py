@@ -4,14 +4,38 @@ import numpy as np
 from collections import deque
 from itertools import pairwise, cycle
 from constants import *
+import socket
 
 
 # Classes
+class Network:
+    socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    address = ("localhost", 9999)
+
+    @classmethod
+    def request_id(cls) -> str:
+        print("Connecting...")
+        while True:
+            try:
+                cls.socket.connect(cls.address)
+            except socket.error as err:
+                print(err)
+            else:
+                print(f"Successfully connected to {cls.address}!")
+                return cls.socket.recv(1024).decode()
+
+    @classmethod
+    def send(cls, data: str) -> str:
+        cls.socket.send(data.encode())
+        return cls.socket.recv(1024).decode()
+
+
 class Player(game.sprite.Sprite):
-    def __init__(self, spawn_pos: tuple[int, int]):
+    def __init__(self):
         super().__init__()
+        self.id = Network.request_id()
         self.image = game.image.load('graphics/player1.png')
-        self.rect = self.image.get_rect(center=spawn_pos)
+        self.rect = self.image.get_rect(center=SPAWN_POSITIONS[int(self.id)])
         self.movement_vector = np.array((0, 0))
         self.health = 3
         self.bullet_cooldown = 0
@@ -48,6 +72,8 @@ class Player(game.sprite.Sprite):
                 if wall_iter.check_collision_rect(self.rect):
                     self.rect.move_ip(-self.movement_vector)
 
+            Network.send(f"Move:{self.id}:{self.rect.x},{self.rect.y}")
+
     def take_damage(self):
         self.health -= 1
         sounds["player_damage"].play()
@@ -55,10 +81,11 @@ class Player(game.sprite.Sprite):
             self.kill()
 
     def shoot(self, target: tuple[int, int]):
+        #   cooldown time is over           rare edge case
         if (self.bullet_cooldown == 0) and (target != self.rect.center):
-                                            # rare edge case
             self.bullet_cooldown = BULLET_COOLDOWN
             bullets.add(Bullet(self.rect.center, target))
+            Network.send(f"Shoot:{self.rect.center[0]},{self.rect.center[1]}:{target[0]},{target[1]}")
 
 
 class Bullet(game.sprite.Sprite):
@@ -184,8 +211,12 @@ def intersect(a, b, c, d) -> bool:
 
 
 # Initialisation
-game.init()
 running = True
+
+wall = None
+player = Player()
+
+game.init()
 clock = game.time.Clock()
 font = game.font.Font("Fonts/Pixeltype.ttf", 40)
 sounds = {"pew": game.mixer.Sound("Sounds/pew.wav"),
@@ -193,12 +224,8 @@ sounds = {"pew": game.mixer.Sound("Sounds/pew.wav"),
           "wall_break": game.mixer.Sound("Sounds/wall_break.wav"),
           "player_damage": game.mixer.Sound("Sounds/player_damage.wav")
           }
-spawn_positions = [(100, 100), (WND_WIDTH-100, WND_HEIGHT-100), (100, WND_HEIGHT-100), (WND_WIDTH-100, 100)]
 screen = game.display.set_mode(size=(WND_WIDTH, WND_HEIGHT))
 game.display.set_caption(GAME_TITLE)
-
-wall = None
-player = Player(spawn_positions[0])
 
 players = game.sprite.Group(player)
 bullets = game.sprite.Group()

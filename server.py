@@ -1,22 +1,23 @@
-import socketserver
-import threading
 import socket
 
+connections = []
+current_id = 0
 
-class MyTCPHandler(socketserver.BaseRequestHandler):
-    def handle(self):
-        # self.request is the TCP socket connected to the client
-        self.data = self.request.recv(1024).strip()
-        print("{} wrote:".format(self.client_address[0]))
-        print(self.data)
-        # just send back the same data, but upper-cased
-        self.request.sendall(self.data.upper())
+with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as socket:
+    socket.bind(('localhost', 9999))
+    socket.listen(2)
+    conn, address = socket.accept()
+    print(f"connected to {address}")
+    if address not in connections:
+        connections.append(address)
+        conn.send(str(current_id).encode())
+        current_id += 1
 
+    while True:
+        data = conn.recv(1024)
+        print(f"received: {data}")
+        conn.send(b"ok buddy")
+        if not data:
+            break
 
-if __name__ == "__main__":
-    HOST, PORT = "localhost", 9999
-
-    with socketserver.TCPServer((HOST, PORT), MyTCPHandler) as server:
-        # Activate the server; this will keep running until you
-        # interrupt the program with Ctrl-C
-        server.serve_forever()
+    conn.close()
