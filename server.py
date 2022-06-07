@@ -26,8 +26,8 @@ def server(connection, address, client_id):
             if client != client_id:
                 pass
 
-        # print(f"received: {data}")
-        # connection.send(b"ok buddy")
+        print(f"received: {data}")
+        # connection.send(b"ok")
 
     print(f"Connection with {address} closed.")
     connection.close()

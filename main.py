@@ -1,58 +1,47 @@
 import pygame as game
+from numpy import array as nparr
+from numpy import linalg as nplinalg
 import math
-import numpy as np
 from collections import deque
 from itertools import pairwise
 from constants import *
-import socket
+from network import Network
 
 
-# Classes
-class Network:
-    socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    port = 9999
-    host = 0
+class Collide:
+    """Methods to check for collision between various game objects"""
+    @staticmethod
+    def rect_and_wall(rect, wall):
+        if (not wall.is_active) or (not rect.colliderect(wall.rect)):
+            return False
+        for node1, node2 in pairwise(wall.nodes):
+            if rect.clipline(node1.pos, node2.pos):
+                return True
+        return False
 
-    @classmethod
-    def request_id(cls) -> str:
-        cls.host = str(input("host: "))
-        if cls.host == "0":    # Offline mode for debugging
-            return "0"
-        print("Connecting...")
+    @staticmethod
+    def rect_and_line(rect, line_start: tuple, line_end: tuple):
+        return rect.clipline(line_start, line_end)
 
-        while True:
-            try:
-                cls.socket.connect((cls.host, cls.port))
-            except socket.error as err:
-                print(err)
-            else:
-                print(f"Successfully connected to {cls.host}:{cls.port}")
-                return cls.socket.recv(1024).decode()
-
-    @classmethod
-    def send(cls, data: str):
-        if cls.host == "0":
-            return "ok"
-        cls.socket.send(str.encode(data))
-        # reply = cls.socket.recv(1024).decode()
-        # return reply
-
-    # @classmethod
-    # def recieve(cls):
-    #     data = cls.socket.recv(1024).decode()
-    #     player_id, action, arguments = data.split(":", maxsplit=2)
-    #     return player_id, action, arguments
+    @staticmethod
+    def wall_and_line(wall, line_start: tuple, line_end: tuple):
+        if (not wall.is_active) or (not wall.rect.clipline(line_start, line_end)):
+            return False
+        for node1, node2 in pairwise(wall.nodes):
+            if intersect(line_start, line_end, node1.pos, node2.pos):
+                return True
+        return False
 
 
 class Player(game.sprite.Sprite):
-    def __init__(self):
-        super().__init__()
-        self.id = Network.request_id()
+    def __init__(self, id):
+        game.sprite.Sprite.__init__(self)
+        self.id = int(id)
         self.image = game.image.load('graphics/player.png')
-        self.rect = self.image.get_rect(center=SPAWN_POSITIONS[int(self.id)])
-        self.movement_vector = np.array((0, 0))
+        self.rect = self.image.get_rect(center=SPAWN_POSITIONS[self.id])
         self.health = 3
         self.bullet_cooldown = 0
+        self.wall = game.sprite.GroupSingle()
 
     @property
     def is_alive(self) -> bool:
@@ -60,16 +49,16 @@ class Player(game.sprite.Sprite):
 
     def update(self):
         # reduce bullet cooldown
-        if self.bullet_cooldown:
+        if self.bullet_cooldown > 0:
             self.bullet_cooldown -= 1
 
         # process keyboard input
         keys_state = game.key.get_pressed()
-        self.movement_vector[0] = PLAYER_SPEED * (keys_state[game.K_d] - keys_state[game.K_a])
-        self.movement_vector[1] = PLAYER_SPEED * (keys_state[game.K_s] - keys_state[game.K_w])
+        x_velocity = PLAYER_SPEED * (keys_state[game.K_d] - keys_state[game.K_a])
+        y_velocity = PLAYER_SPEED * (keys_state[game.K_s] - keys_state[game.K_w])
 
-        if self.movement_vector.any():
-            self.rect.move_ip(self.movement_vector)
+        if x_velocity or y_velocity:
+            self.rect.move_ip(x_velocity, y_velocity)
 
             # check if player is trying to move outside the window bounds
             if self.rect.bottom > WND_HEIGHT:
@@ -81,12 +70,17 @@ class Player(game.sprite.Sprite):
             if self.rect.left < 0:
                 self.rect.left = 0
 
-            # check collision with walls and other players
-            for wall_iter in walls:
-                if wall_iter.check_collision_rect(self.rect):
-                    self.rect.move_ip(-self.movement_vector)
-
-            Network.send(f"{self.id}:move:{self.rect.x},{self.rect.y}")
+            # check collision with other entities
+            for entity in entities:
+                if entity is self:
+                    continue
+                if isinstance(entity, Wall):
+                    if Collide.rect_and_wall(self.rect, entity):
+                        self.rect.move_ip(-x_velocity, -y_velocity)
+                elif isinstance(entity, Player):
+                    if self.rect.colliderect(entity.rect):
+                        self.rect.move_ip(-x_velocity, -y_velocity)
+            network.send(f"{self.id}:move:{self.rect.x},{self.rect.y}")
 
     def take_damage(self):
         self.health -= 1
@@ -95,21 +89,21 @@ class Player(game.sprite.Sprite):
             self.kill()
 
     def shoot(self, target: tuple[int, int]):
-        #   cooldown time is over           rare edge case
+        #   cooldown time is over           otherwise vector would be of length 0
         if (self.bullet_cooldown == 0) and (target != self.rect.center):
             self.bullet_cooldown = BULLET_COOLDOWN
-            bullets.add(Bullet(self.rect.center, target))
-            Network.send(f"{self.id}:shoot:{self.rect.center[0]},{self.rect.center[1]},{target[0]},{target[1]}")
+            entities.add(Bullet(self.rect.center, target))
+            network.send(f"{self.id}:shoot:{self.rect.center[0]},{self.rect.center[1]},{target[0]},{target[1]}")
 
 
 class Bullet(game.sprite.Sprite):
     def __init__(self, origin: tuple[int, int], target: tuple[int, int], hostile=False):
-        super().__init__()
-        self.origin = np.array(origin, dtype=float)
-        self.vector = np.array([target[0]-origin[0], target[1]-origin[1]], dtype=float)
-        self.vector = self.vector * BULLET_LENGTH / np.linalg.norm(self.vector)
+        game.sprite.Sprite.__init__(self)
+        self.origin = nparr(origin, dtype=float)
+        self.vector = nparr([target[0]-origin[0], target[1]-origin[1]], dtype=float)
+        self.vector = self.vector * BULLET_LENGTH / nplinalg.norm(self.vector)
         self.hostile = hostile
-        self.color = 'green'
+        self.color = "green"
         sounds["pew"].play()
 
     def update(self):
@@ -117,17 +111,19 @@ class Bullet(game.sprite.Sprite):
         self.origin += BULLET_SPEED * self.vector
         if not screen.get_rect().collidepoint(tuple(self.origin)):
             self.kill()
-        for wall_iter in walls:
-            # upon hitting a wall bullet bounces and becomes hostile - now it can also damage the shooter
-            if wall_iter.check_collision_line(tuple(self.origin), tuple(self.origin+self.vector)):
-                wall_iter.take_damage()
-                self.vector = -self.vector
-                self.hostile = True
-                self.color = 'red'
-        for player_iter in players:
-            if self. hostile and player_iter.rect.clipline(self.origin, self.origin+self.vector):
-                self.kill()
-                player_iter.take_damage()
+
+        for entity in entities:
+            if isinstance(entity, Wall):
+                # upon hitting a wall bullet bounces and becomes hostile - now it can also damage the shoote
+                if Collide.wall_and_line(entity, tuple(self.origin), tuple(self.origin+self.vector)):
+                    entity.take_damage()
+                    self.vector = -self.vector
+                    self.hostile = True
+                    self.color = "red"
+            if isinstance(entity, Player):
+                if self.hostile and Collide.rect_and_line(entity.rect, tuple(self.origin), tuple(self.origin+self.vector)):
+                    self.kill()
+                    entity.take_damage()
 
 
 class WallNode:
@@ -151,10 +147,10 @@ class Wall(game.sprite.Sprite):
     and deleted from another forming a line of set max length that follows their cursor. Thus, nodes are stored in
     a deque for fast appends and pops"""
     def __init__(self, first_node: tuple[int, int]):
-        super().__init__()
+        game.sprite.Sprite.__init__(self)
         self.nodes = deque((WallNode(first_node),))
         self.total_length = 0.
-        self.health = 3
+        self.health = 2
         self.is_active = False
         self.drawing_mode = True
         self.color = WALL_COLOR_INACTIVE
@@ -167,10 +163,10 @@ class Wall(game.sprite.Sprite):
             self.total_length -= self.nodes[0].dist_to_next
             self.nodes.popleft()
 
-    def kill(self, silent=False):
-        if not silent:
+    def kill(self, play_sound=True):
+        if play_sound:
             sounds["wall_break"].play()
-        super().kill()
+        game.sprite.Sprite.kill(self)
 
     def take_damage(self):
         self.health -= 1
@@ -184,7 +180,9 @@ class Wall(game.sprite.Sprite):
         self.is_active = True
         self.color = WALL_COLOR_ACTIVE
         self.rect = self.get_rect()
-        if (len(self.nodes) < 2) or self.check_collision_rect(player.rect):
+        if len(self.nodes) < 2:
+            self.kill(False)
+        elif Collide.rect_and_wall(player.rect, self):
             self.kill(True)
 
     def update(self):
@@ -201,22 +199,6 @@ class Wall(game.sprite.Sprite):
         max_y = max(node.y for node in self.nodes)
         return game.rect.Rect(min_x-1, min_y-1, max_x - min_x + 1, max_y - min_y + 1)
 
-    def check_collision_rect(self, rect):
-        if (not self.is_active) or (not self.rect.colliderect(rect)):
-            return False
-        for node1, node2 in pairwise(self.nodes):
-            if rect.clipline(node1.pos, node2.pos):
-                return True
-        return False
-
-    def check_collision_line(self, a, b):
-        if (not self.is_active) or (not self.rect.clipline(a, b)):
-            return False
-        for node1, node2 in pairwise(self.nodes):
-            if intersect(a, b, node1.pos, node2.pos):
-                return True
-        return False
-
 
 # Return true if line segments AB and CD intersect
 def intersect(a, b, c, d) -> bool:
@@ -226,28 +208,24 @@ def intersect(a, b, c, d) -> bool:
 
 
 # Initialisation
-running = True
-
-wall = None
-player = Player()
-
 game.init()
-clock = game.time.Clock()
-# font = game.font.Font("Fonts/Pixeltype.ttf", 40)
-sounds = {"pew": game.mixer.Sound("Sounds/pew.wav"),
-          "wall_hit": game.mixer.Sound("Sounds/wall_hit.wav"),
-          "wall_break": game.mixer.Sound("Sounds/wall_break.wav"),
-          "player_damage": game.mixer.Sound("Sounds/player_damage.wav")
-          }
+running = True
 screen = game.display.set_mode(size=(WND_WIDTH, WND_HEIGHT))
 game.display.set_caption(GAME_TITLE)
 
-players = game.sprite.Group(player)
-bullets = game.sprite.Group()
-walls = game.sprite.Group()
+# Game objects
+network = Network("0", 9999)
+clock = game.time.Clock()
+player = Player(network.request_id())
+entities = game.sprite.Group(player)
 
+# Resources
 heart = game.image.load("Graphics/heart.png")
-
+font = game.font.Font("Fonts/Pixeltype.ttf", 40)
+sounds = {"pew": game.mixer.Sound("Sounds/pew.wav"),
+          "wall_hit": game.mixer.Sound("Sounds/wall_hit.wav"),
+          "wall_break": game.mixer.Sound("Sounds/wall_break.wav"),
+          "player_damage": game.mixer.Sound("Sounds/player_damage.wav")}
 
 # Game Loop
 while running:
@@ -263,39 +241,40 @@ while running:
 
         elif event.type == game.MOUSEBUTTONDOWN:
             if event.button == 1:
-                if wall in walls:
-                    wall.kill()
-                wall = Wall(event.pos)
-                walls.add(wall)
+                if player.wall:
+                    player.wall.sprite.kill()
+                player.wall.add(Wall(event.pos))
+                entities.add(player.wall.sprite)
             elif event.button == 3:
                 player.shoot(event.pos)
 
         elif event.type == game.MOUSEMOTION:
-            if wall and wall.drawing_mode:
-                wall.append(WallNode(event.pos))
+            if player.wall and player.wall.sprite.drawing_mode:
+                player.wall.sprite.append(WallNode(event.pos))
 
         elif event.type == game.MOUSEBUTTONUP:
-            if event.button == 1 and wall and wall.drawing_mode:
-                wall.activate()
+            if event.button == 1:
+                if player.wall and player.wall.sprite.drawing_mode:
+                    player.wall.sprite.activate()
 
         elif event.type == game.WINDOWLEAVE:
-            if wall and wall.drawing_mode:
-                wall.kill()
+            if player.wall and player.wall.sprite.drawing_mode:
+                player.wall.sprite.kill()
 
     # fps display
-    # fps_surf = font.render(f'{int(clock.get_fps())}', False, 'black')
-    # fps_rect = fps_surf.get_rect(topleft=(0, 0))
-    # screen.blit(fps_surf, fps_rect)
+    fps_surf = font.render(f'{int(clock.get_fps())}', False, 'black')
+    fps_rect = fps_surf.get_rect(topleft=(0, 0))
+    screen.blit(fps_surf, fps_rect)
 
     # health display
     for i in range(player.health):
         screen.blit(heart, heart.get_rect(topright=(WND_WIDTH - i * heart.get_width(), 0)))
 
     # update all entities
-    players.update()
-    players.draw(screen)
-    bullets.update()
-    walls.update()
+    entities.update()
+    for entity in entities:
+        if hasattr(entity, "image"):
+            screen.blit(entity.image, entity.rect)
 
     game.display.update()
     clock.tick(60)
