@@ -2,7 +2,7 @@ import pygame as game
 import math
 import numpy as np
 from collections import deque
-from itertools import pairwise, cycle
+from itertools import pairwise
 from constants import *
 import socket
 
@@ -10,31 +10,45 @@ import socket
 # Classes
 class Network:
     socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    address = ("localhost", 9999)
+    port = 9999
+    host = 0
 
     @classmethod
     def request_id(cls) -> str:
+        cls.host = str(input("host: "))
+        if cls.host == "0":    # Offline mode for debugging
+            return "0"
         print("Connecting...")
+
         while True:
             try:
-                cls.socket.connect(cls.address)
+                cls.socket.connect((cls.host, cls.port))
             except socket.error as err:
                 print(err)
             else:
-                print(f"Successfully connected to {cls.address}!")
+                print(f"Successfully connected to {cls.host}:{cls.port}")
                 return cls.socket.recv(1024).decode()
 
     @classmethod
-    def send(cls, data: str) -> str:
-        cls.socket.send(data.encode())
-        return cls.socket.recv(1024).decode()
+    def send(cls, data: str):
+        if cls.host == "0":
+            return "ok"
+        cls.socket.send(str.encode(data))
+        # reply = cls.socket.recv(1024).decode()
+        # return reply
+
+    # @classmethod
+    # def recieve(cls):
+    #     data = cls.socket.recv(1024).decode()
+    #     player_id, action, arguments = data.split(":", maxsplit=2)
+    #     return player_id, action, arguments
 
 
 class Player(game.sprite.Sprite):
     def __init__(self):
         super().__init__()
         self.id = Network.request_id()
-        self.image = game.image.load('graphics/player1.png')
+        self.image = game.image.load('graphics/player.png')
         self.rect = self.image.get_rect(center=SPAWN_POSITIONS[int(self.id)])
         self.movement_vector = np.array((0, 0))
         self.health = 3
@@ -72,7 +86,7 @@ class Player(game.sprite.Sprite):
                 if wall_iter.check_collision_rect(self.rect):
                     self.rect.move_ip(-self.movement_vector)
 
-            Network.send(f"Move:{self.id}:{self.rect.x},{self.rect.y}")
+            Network.send(f"{self.id}:move:{self.rect.x},{self.rect.y}")
 
     def take_damage(self):
         self.health -= 1
@@ -85,7 +99,7 @@ class Player(game.sprite.Sprite):
         if (self.bullet_cooldown == 0) and (target != self.rect.center):
             self.bullet_cooldown = BULLET_COOLDOWN
             bullets.add(Bullet(self.rect.center, target))
-            Network.send(f"Shoot:{self.rect.center[0]},{self.rect.center[1]}:{target[0]},{target[1]}")
+            Network.send(f"{self.id}:shoot:{self.rect.center[0]},{self.rect.center[1]},{target[0]},{target[1]}")
 
 
 class Bullet(game.sprite.Sprite):
@@ -153,8 +167,9 @@ class Wall(game.sprite.Sprite):
             self.total_length -= self.nodes[0].dist_to_next
             self.nodes.popleft()
 
-    def kill(self):
-        sounds["wall_break"].play()
+    def kill(self, silent=False):
+        if not silent:
+            sounds["wall_break"].play()
         super().kill()
 
     def take_damage(self):
@@ -170,7 +185,7 @@ class Wall(game.sprite.Sprite):
         self.color = WALL_COLOR_ACTIVE
         self.rect = self.get_rect()
         if (len(self.nodes) < 2) or self.check_collision_rect(player.rect):
-            self.kill()
+            self.kill(True)
 
     def update(self):
         if len(self.nodes) == 1:
@@ -218,7 +233,7 @@ player = Player()
 
 game.init()
 clock = game.time.Clock()
-font = game.font.Font("Fonts/Pixeltype.ttf", 40)
+# font = game.font.Font("Fonts/Pixeltype.ttf", 40)
 sounds = {"pew": game.mixer.Sound("Sounds/pew.wav"),
           "wall_hit": game.mixer.Sound("Sounds/wall_hit.wav"),
           "wall_break": game.mixer.Sound("Sounds/wall_break.wav"),
@@ -268,9 +283,9 @@ while running:
                 wall.kill()
 
     # fps display
-    fps_surf = font.render(f'{int(clock.get_fps())}', False, 'black')
-    fps_rect = fps_surf.get_rect(topleft=(0, 0))
-    screen.blit(fps_surf, fps_rect)
+    # fps_surf = font.render(f'{int(clock.get_fps())}', False, 'black')
+    # fps_rect = fps_surf.get_rect(topleft=(0, 0))
+    # screen.blit(fps_surf, fps_rect)
 
     # health display
     for i in range(player.health):
@@ -284,6 +299,5 @@ while running:
 
     game.display.update()
     clock.tick(60)
-
 
 game.quit()

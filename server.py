@@ -1,23 +1,42 @@
 import socket
+import threading
 
-connections = []
-current_id = 0
+clients = {}
+client_id = 0
+max_connections = 2
 
-with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as socket:
-    socket.bind(('localhost', 9999))
-    socket.listen(2)
-    conn, address = socket.accept()
-    print(f"connected to {address}")
-    if address not in connections:
-        connections.append(address)
-        conn.send(str(current_id).encode())
-        current_id += 1
+sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+
+server = "localhost"
+port = 9999
+
+sock.bind((server, port))
+sock.listen(max_connections)
+
+
+def server(connection, address, client_id):
+    global clients
+    connection.send(str(client_id).encode())
 
     while True:
-        data = conn.recv(1024)
-        print(f"received: {data}")
-        conn.send(b"ok buddy")
+        data = connection.recv(1024)
         if not data:
             break
+        for client in clients:
+            if client != client_id:
+                pass
 
-    conn.close()
+        # print(f"received: {data}")
+        # connection.send(b"ok buddy")
+
+    print(f"Connection with {address} closed.")
+    connection.close()
+
+
+while client_id < max_connections:
+    connection, address = sock.accept()
+    print("Connected to", address)
+    threading.Thread(target=server, args=(connection, address, client_id)).run()
+
+    clients[client_id] = address
+    client_id += 1
