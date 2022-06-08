@@ -1,3 +1,5 @@
+import pickle
+
 import pygame as game
 from numpy import array as nparr
 from numpy import linalg as nplinalg
@@ -27,10 +29,10 @@ class Network:
         except sock.error as error:
             print(error)
 
-    def send(self, data: str):
+    def send(self, data: bytes):
         self.idle = False
         try:
-            self.socket.send(data.encode())
+            self.socket.send(data)
             self.process_response(self.socket.recv(1024).decode())
         except sock.error as error:
             print(error)
@@ -135,7 +137,7 @@ class Player(game.sprite.Sprite):
             if move_back:
                 self.rect.move_ip(-x_velocity, -y_velocity)
             else:
-                network.send(f"move:{self.rect.x},{self.rect.y}")
+                network.send(f"move:{self.rect.x},{self.rect.y}".encode())
 
     def take_damage(self):
         self.health -= 1
@@ -148,7 +150,7 @@ class Player(game.sprite.Sprite):
         if (self.bullet_cooldown == 0) and (target != self.rect.center):
             self.bullet_cooldown = BULLET_COOLDOWN
             entities.add(Bullet(self.rect.center, target))
-            network.send(f"shoot:{self.rect.center[0]},{self.rect.center[1]},{target[0]},{target[1]}")
+            network.send(f"shoot:{self.rect.center[0]},{self.rect.center[1]},{target[0]},{target[1]}".encode())
 
 
 class Enemy(game.sprite.Sprite):
@@ -188,7 +190,8 @@ class Bullet(game.sprite.Sprite):
                     self.hostile = True
                     self.color = "red"
             elif isinstance(entity, Player):
-                if self.hostile and Collide.rect_and_line(entity.rect, tuple(self.origin), tuple(self.origin+self.vector)):
+                if self.hostile and Collide.rect_and_line(entity.rect, tuple(self.origin),
+                                                          tuple(self.origin+self.vector)):
                     self.kill()
                     entity.take_damage()
             elif isinstance(entity, Enemy):
@@ -216,6 +219,15 @@ class Wall(game.sprite.Sprite):
     """In-game object consisting of nodes connected by lines. As the player draws, nodes get added to one side
     and deleted from another forming a line of set max length that follows their cursor. Thus, nodes are stored in
     a deque for fast appends and pops"""
+    @classmethod
+    def unpickle(cls, pickled_wall):
+        new_deque = pickle.loads(pickled_wall)
+        new_wall = Wall(new_deque[0])
+        for node in new_deque[1:]:
+            new_wall.append(node)
+        new_wall.activate(send_to_server=False)
+        return new_wall
+
     def __init__(self, first_node: tuple[int, int]):
         game.sprite.Sprite.__init__(self)
         self.nodes = deque((WallNode(first_node),))
@@ -245,7 +257,7 @@ class Wall(game.sprite.Sprite):
         else:
             self.kill(silent=False)
 
-    def activate(self):
+    def activate(self, send_to_server=True):
         self.drawing_mode = False
         self.is_active = True
         self.color = WALL_COLOR_ACTIVE
@@ -258,7 +270,9 @@ class Wall(game.sprite.Sprite):
                 if Collide.rect_and_wall(entity.rect, self):
                     self.kill(silent=False)
                     return
-        network.send("wall:0")
+
+        if send_to_server:
+            network.send(b"wall:" + pickle.dumps(self.nodes))
 
     def update(self):
         if len(self.nodes) == 1:
@@ -353,7 +367,7 @@ while running:
             screen.blit(entity.image, entity.rect)
 
     if network.idle is True:
-        network.send("idle:0")
+        network.send(b"idle:0")
 
     game.display.update()
     clock.tick(60)
