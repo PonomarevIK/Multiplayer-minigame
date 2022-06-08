@@ -8,6 +8,54 @@ from constants import *
 import socket as sock
 
 
+class Network:
+    def __init__(self, host="localhost", port=9999):
+        self.socket = sock.socket(sock.AF_INET, sock.SOCK_STREAM)
+        self.host = host
+        self.port = port
+        self.address = (self.host, self.port)
+        self.idle = True
+        self.client_id = None
+        self.other_players = []
+
+    def request_id(self) -> str:
+        print("Connecting...")
+        try:
+            self.socket.connect(self.address)
+            print(f"Successfully connected to {self.host}:{self.port}")
+            return self.socket.recv(1024).decode()
+        except sock.error as error:
+            print(error)
+
+    def send(self, data: str):
+        self.idle = False
+        try:
+            self.socket.send(data.encode())
+            self.process_response(self.socket.recv(1024).decode())
+        except sock.error as error:
+            print(error)
+
+    def process_response(self, data: str):
+        if data == "empty":
+            return
+
+        sender_id, action, action_data = data.split(":", maxsplit=2)
+
+        if action == "idle":
+            return
+        elif action == "move":
+            pos_x, pos_y = action_data.split(",", maxsplit=1)
+            for entity in entities:
+                if isinstance(entity, Enemy) and entity.id == int(sender_id):
+                    entity.move(int(pos_x), int(pos_y))
+        elif action == "shoot":
+            origin_x, origin_y, target_x, target_y = data.split(",", maxsplit=3)
+            entities.add(Bullet((int(origin_x), int(origin_y)),
+                                (int(target_x), int(target_y)), hostile=True))
+        elif action == "wall":
+            print("Wall")
+
+
 class Collide:
     """Methods to check for collision between various game objects"""
     @staticmethod
@@ -31,58 +79,6 @@ class Collide:
             if intersect(line_start, line_end, node1.pos, node2.pos):
                 return True
         return False
-
-
-class Network:
-    def __init__(self, host="localhost", port=9999):
-        self.socket = sock.socket(sock.AF_INET, sock.SOCK_STREAM)
-        self.host = host
-        self.port = port
-        self.address = (self.host, self.port)
-        self.idling = True
-
-    def request_id(self) -> str:
-        if self.host == "0":    # Offline mode for debugging
-            return "0"
-
-        print("Connecting...")
-        while True:
-            try:
-                self.socket.connect(self.address)
-                print(f"Successfully connected to {self.host}:{self.port}")
-                return self.socket.recv(1024).decode()
-            except sock.error as error:
-                print(error)
-
-    def send(self, data: str):
-        self.idling = False
-
-        if self.host == "0":
-            return "ok"
-
-        try:
-            self.socket.send(data.encode())
-            self.process_response(self.socket.recv(1024).decode())
-        except sock.error as error:
-            print(error)
-
-    def process_response(self, data: str):
-        if data == "idle":
-            return
-
-        sender_id, action, action_data = data.split(":", maxsplit=2)
-
-        if action == "move":
-            vel_x, vel_y = action_data.split(",", maxsplit=1)
-            for entity in entities:
-                if isinstance(entity, Enemy) and entity.id == sender_id:
-                    entity.move(int(vel_x), int(vel_y))
-        elif action == "shoot":
-            origin_x, origin_y, target_x, target_y = data.split(",", maxsplit=3)
-            entities.add(Bullet((int(origin_x), int(origin_y)),
-                                (int(target_x), int(target_y)), hostile=True))
-        elif action == "wall":
-            print("Wall")
 
 
 
@@ -137,7 +133,7 @@ class Player(game.sprite.Sprite):
             if move_back:
                 self.rect.move_ip(-x_velocity, -y_velocity)
             else:
-                network.send(f"{self.id}:move:{self.rect.x},{self.rect.y}")
+                network.send(f"move:{self.rect.x},{self.rect.y}")
 
     def take_damage(self):
         self.health -= 1
@@ -150,7 +146,7 @@ class Player(game.sprite.Sprite):
         if (self.bullet_cooldown == 0) and (target != self.rect.center):
             self.bullet_cooldown = BULLET_COOLDOWN
             entities.add(Bullet(self.rect.center, target))
-            network.send(f"{self.id}:shoot:{self.rect.center[0]},{self.rect.center[1]},{target[0]},{target[1]}")
+            network.send(f"shoot:{self.rect.center[0]},{self.rect.center[1]},{target[0]},{target[1]}")
 
 
 class Enemy(game.sprite.Sprite):
@@ -162,7 +158,7 @@ class Enemy(game.sprite.Sprite):
         self.health = 3
 
     def move(self, x, y):
-        self.rect.move_ip(x, y)
+        self.rect.move_ip(x - self.rect.x, y - self.rect.y)
 
 
 class Bullet(game.sprite.Sprite):
@@ -189,10 +185,13 @@ class Bullet(game.sprite.Sprite):
                     self.vector = -self.vector
                     self.hostile = True
                     self.color = "red"
-            if isinstance(entity, Player):
+            elif isinstance(entity, Player):
                 if self.hostile and Collide.rect_and_line(entity.rect, tuple(self.origin), tuple(self.origin+self.vector)):
                     self.kill()
                     entity.take_damage()
+            elif isinstance(entity, Enemy):
+                if Collide.rect_and_line(entity.rect, tuple(self.origin), tuple(self.origin + self.vector)):
+                    self.kill()
 
 
 class WallNode:
@@ -215,7 +214,7 @@ class Wall(game.sprite.Sprite):
     """In-game object consisting of nodes connected by lines. As the player draws, nodes get added to one side
     and deleted from another forming a line of set max length that follows their cursor. Thus, nodes are stored in
     a deque for fast appends and pops"""
-    def __init__(self, first_node: tuple[int, int], owner: Player):
+    def __init__(self, first_node: tuple[int, int]):
         game.sprite.Sprite.__init__(self)
         self.nodes = deque((WallNode(first_node),))
         self.total_length = 0.
@@ -256,6 +255,8 @@ class Wall(game.sprite.Sprite):
             if isinstance(entity, Player) or isinstance(entity, Enemy):
                 if Collide.rect_and_wall(entity.rect, self):
                     self.kill(silent=False)
+                    return
+        network.send("wall:0")
 
     def update(self):
         if len(self.nodes) == 1:
@@ -286,7 +287,7 @@ screen = game.display.set_mode(size=(WND_WIDTH, WND_HEIGHT))
 game.display.set_caption(GAME_TITLE)
 
 # Game objects
-network = Network("0", 9999)
+network = Network("localhost", 9999)
 clock = game.time.Clock()
 player = Player(network.request_id())
 entities = game.sprite.Group(player)
@@ -302,7 +303,7 @@ sounds = {"pew": game.mixer.Sound("Sounds/pew.wav"),
 # Game Loop
 while running:
     screen.fill("white")
-    network.idling = True
+    network.idle = True
 
     for event in game.event.get():
         if event.type == game.QUIT:
@@ -316,7 +317,7 @@ while running:
             if event.button == 1:
                 if player.wall:
                     player.wall.sprite.kill()
-                player.wall.add(Wall(event.pos, player))
+                player.wall.add(Wall(event.pos))
                 entities.add(player.wall.sprite)
             elif event.button == 3:
                 player.shoot(event.pos)
@@ -349,7 +350,7 @@ while running:
         if hasattr(entity, "image"):
             screen.blit(entity.image, entity.rect)
 
-    if network.idling is True:
+    if network.idle is True:
         network.send("idle")
 
     game.display.update()
