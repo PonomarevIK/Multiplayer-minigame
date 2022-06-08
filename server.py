@@ -1,7 +1,7 @@
 import socket
-import threading
+from _thread import start_new_thread
 
-clients = {}
+client_last_message = {}
 client_id = 0
 max_connections = 2
 
@@ -14,20 +14,25 @@ sock.bind((server, port))
 sock.listen(max_connections)
 
 
-def server(connection, address, client_id):
-    global clients
+def client_thread(connection, address, client_id):
     connection.send(str(client_id).encode())
 
     while True:
-        data = connection.recv(1024)
-        if not data:
-            break
-        for client in clients:
-            if client != client_id:
-                pass
+        try:
+            data = connection.recv(1024).decode()
+            if not data:
+                break
 
-        print(f"received: {data}")
-        # connection.send(b"ok")
+            client_last_message[client_id] = data
+            print(f"received: '{data}' from {client_id}")
+            if len(client_last_message) == 1:
+                connection.send("idle".encode())
+            for id, message in client_last_message.items():
+                if id != client_id:
+                    connection.send(f"{client_id}:{data}".encode())
+        except socket.error as error:
+            print(error)
+            break
 
     print(f"Connection with {address} closed.")
     connection.close()
@@ -35,8 +40,8 @@ def server(connection, address, client_id):
 
 while client_id < max_connections:
     connection, address = sock.accept()
-    print("Connected to", address)
-    threading.Thread(target=server, args=(connection, address, client_id)).run()
+    print(f"Connected to player {client_id} at {address}")
+    client_last_message[client_id] = "idle"
 
-    clients[client_id] = address
+    start_new_thread(client_thread, (connection, address, client_id))
     client_id += 1
