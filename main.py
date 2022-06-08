@@ -6,6 +6,60 @@ from collections import deque
 from itertools import pairwise
 from constants import *
 import socket as sock
+import pickle
+
+
+class Network:
+    def __init__(self, host="localhost", port=9999):
+        self.socket = sock.socket(sock.AF_INET, sock.SOCK_STREAM)
+        self.host = host
+        self.port = port
+        self.address = (host, port)
+        self.idle = True
+        self.client_id = None
+        self.other_players = []
+
+    def request_id(self) -> str:
+        print("Connecting...")
+        while True:
+            try:
+                self.socket.connect(self.address)
+                print(f"Successfully connected to {self.host}:{self.port}")
+                self.client_id = self.socket.recv(1024).decode()
+                return self.client_id
+            except sock.error as error:
+                print(error)
+
+    def send(self, data: bytes):
+        self.idle = False
+        try:
+            self.socket.send(data)
+            self.process_response(self.socket.recv(1024).decode())
+        except sock.error as error:
+            print(error)
+
+    def process_response(self, data: str):
+        if data == "empty":
+            return
+
+        sender_id, action, action_data = data.split(":", maxsplit=2)
+        if sender_id not in self.other_players:
+            self.other_players.append(sender_id)
+            entities.add(Enemy(int(sender_id)))
+
+        if action == "idle":
+            return
+        elif action == "move":
+            pos_x, pos_y = action_data.split(",", maxsplit=1)
+            for entity in entities:
+                if isinstance(entity, Enemy) and entity.id == int(sender_id):
+                    entity.move(int(pos_x), int(pos_y))
+        elif action == "shoot":
+            origin_x, origin_y, target_x, target_y = data.split(",", maxsplit=3)
+            entities.add(Bullet((int(origin_x), int(origin_y)),
+                                (int(target_x), int(target_y)), hostile=True))
+        elif action == "wall":
+            entities.add(Wall.unpickle(action_data))
 
 
 class Collide:
@@ -31,64 +85,6 @@ class Collide:
             if intersect(line_start, line_end, node1.pos, node2.pos):
                 return True
         return False
-
-
-class Network:
-    def __init__(self, host="localhost", port=9999):
-        self.socket = sock.socket(sock.AF_INET, sock.SOCK_STREAM)
-        self.host = host
-        self.port = port
-        self.address = (host, port)
-        self.idle = True
-        self.client_id = None
-        self.other_players = []
-
-    def request_id(self) -> str:
-        if self.host == "0":    # Offline mode for debugging
-            return "0"
-
-        print("Connecting...")
-        while True:
-            try:
-                self.socket.connect(self.address)
-                print(f"Successfully connected to {self.host}:{self.port}")
-                self.client_id = self.socket.recv(1024).decode()
-                return self.client_id
-            except sock.error as error:
-                print(error)
-
-    def send(self, data: str):
-        self.idle = False
-        if self.host == "0":
-            return "ok"
-
-        try:
-            self.socket.send(data.encode())
-            self.process_response(self.socket.recv(1024).decode())
-        except sock.error as error:
-            print(error)
-
-    def process_response(self, data: str):
-        if data == "idle":
-            return
-
-        sender_id, action, action_data = data.split(":", maxsplit=2)
-
-        if sender_id not in self.other_players:
-            self.other_players.append(sender_id)
-            entities.add(Enemy(int(sender_id)))
-
-        if action == "move":
-            pos_x, pos_y = action_data.split(",", maxsplit=1)
-            for entity in entities:
-                if isinstance(entity, Enemy) and entity.id == sender_id:
-                    entity.move(int(pos_x), int(pos_y))
-        elif action == "shoot":
-            origin_x, origin_y, target_x, target_y = data.split(",", maxsplit=3)
-            entities.add(Bullet((int(origin_x), int(origin_y)),
-                                (int(target_x), int(target_y)), hostile=True))
-        elif action == "wall":
-            print("Wall")
 
 
 class Player(game.sprite.Sprite):
@@ -136,13 +132,13 @@ class Player(game.sprite.Sprite):
                 if isinstance(entity, Wall):
                     if Collide.rect_and_wall(self.rect, entity):
                         move_back = True
-                elif isinstance(entity, Player):
+                elif isinstance(entity, (Player, Enemy)):
                     if self.rect.colliderect(entity.rect):
                         move_back = True
             if move_back:
                 self.rect.move_ip(-x_velocity, -y_velocity)
             else:
-                network.send(f"move:{self.rect.x},{self.rect.y}")
+                network.send(f"move:{self.rect.x},{self.rect.y}".encode())
 
     def take_damage(self):
         self.health -= 1
@@ -155,7 +151,7 @@ class Player(game.sprite.Sprite):
         if (self.bullet_cooldown == 0) and (target != self.rect.center):
             self.bullet_cooldown = BULLET_COOLDOWN
             entities.add(Bullet(self.rect.center, target))
-            network.send(f"shoot:{self.rect.center[0]},{self.rect.center[1]},{target[0]},{target[1]}")
+            network.send(f"shoot:{self.rect.center[0]},{self.rect.center[1]},{target[0]},{target[1]}".encode())
 
 
 class Enemy(game.sprite.Sprite):
@@ -221,9 +217,18 @@ class Wall(game.sprite.Sprite):
     """In-game object consisting of nodes connected by lines. As the player draws, nodes get added to one side
     and deleted from another forming a line of set max length that follows their cursor. Thus, nodes are stored in
     a deque for fast appends and pops"""
-    def __init__(self, first_node: tuple[int, int], owner: Player):
+    @classmethod
+    def unpickle(cls, pickled_deque):
+        node_deque = pickle.loads(pickled_deque)
+        new_wall = Wall(node_deque[0])
+        new_wall.drawing_mode = False
+        new_wall.is_active = True
+        for node in node_deque[1:]:
+            new_wall.append(node)
+        return new_wall
+
+    def __init__(self, first_node: tuple[int, int]):
         game.sprite.Sprite.__init__(self)
-        self.owner = owner
         self.nodes = deque((WallNode(first_node),))
         self.total_length = 0.
         self.health = 2
@@ -263,6 +268,8 @@ class Wall(game.sprite.Sprite):
             if isinstance(entity, Player) or isinstance(entity, Enemy):
                 if Collide.rect_and_wall(entity.rect, self):
                     self.kill(silent=False)
+                    return
+        network.send(b"wall:"+pickle.dumps(self.nodes))
 
     def update(self):
         if len(self.nodes) == 1:
@@ -286,17 +293,17 @@ def intersect(a, b, c, d) -> bool:
     return ccw(a, c, d) != ccw(b, c, d) and ccw(a, b, c) != ccw(a, b, d)
 
 
+# Main objects
+network = Network("localhost", 9999)  # TODO: ask to input host manually
+player = Player(network.request_id())
+
 # Initialisation
 game.init()
-running = True
-screen = game.display.set_mode(size=(WND_WIDTH, WND_HEIGHT))
 game.display.set_caption(GAME_TITLE)
-
-# Game objects
-network = Network("localhost", 9999)  # TODO: ask to input host manually
+screen = game.display.set_mode(size=(WND_WIDTH, WND_HEIGHT))
 clock = game.time.Clock()
-player = Player(network.request_id())
 entities = game.sprite.Group(player)
+running = True
 
 # Resources
 heart = game.image.load("Graphics/heart.png")
@@ -323,7 +330,7 @@ while running:
             if event.button == 1:
                 if player.wall:
                     player.wall.sprite.kill()
-                player.wall.add(Wall(event.pos, player))
+                player.wall.add(Wall(event.pos))
                 entities.add(player.wall.sprite)
             elif event.button == 3:
                 player.shoot(event.pos)
@@ -357,7 +364,7 @@ while running:
             screen.blit(entity.image, entity.rect)
 
     if network.idle is True:
-        network.send("idle")
+        network.send("idle:".encode())
 
     game.display.update()
     clock.tick(60)
