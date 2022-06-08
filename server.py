@@ -1,5 +1,5 @@
 import socket
-import _thread
+import threading
 
 client_last_message = {}
 current_client_id = 0
@@ -7,10 +7,10 @@ max_connections = 2
 
 sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 
-server = "26.8.152.253"
+server_ip = input("Server ip (leave blank for localhost): ") or "localhost"
 port = 9999
 
-sock.bind((server, port))
+sock.bind((server_ip, port))
 sock.listen(max_connections)
 
 
@@ -42,6 +42,6 @@ def client_thread(connection, address, client_id):
 while current_client_id <= max_connections:
     connection, address = sock.accept()
     print(f"Connected to player {current_client_id} at {address}")
-    _thread.start_new_thread(client_thread, (connection, address, current_client_id))
+    threading.Thread(target=client_thread, args=(connection, address, current_client_id)).start()
 
     current_client_id += 1

@@ -1,6 +1,6 @@
 import pygame as game
-from numpy import array as nparr
-from numpy import linalg as nplinalg
+from numpy import array as np_arr
+from numpy import linalg as np_linalg
 import math
 from collections import deque
 from itertools import pairwise
@@ -19,6 +19,9 @@ class Network:
         self.other_players = []
 
     def request_id(self) -> str:
+        if self.host == "0":  # offline mode
+            return "0"
+
         print("Connecting...")
         try:
             self.socket.connect(self.address)
@@ -28,6 +31,9 @@ class Network:
             print(error)
 
     def send(self, data: str):
+        if self.host == "0":
+            return
+
         self.idle = False
         try:
             self.socket.send(data.encode())
@@ -57,6 +63,10 @@ class Network:
                                 (int(target_x), int(target_y)), hostile=True))
         elif action == "wall":
             entities.add(Wall.unpickle(action_data))
+        elif action == "quit":
+            for entity in entities:
+                if isinstance(entity, Enemy) and entity.id == int(sender_id):
+                    entity.kill()
 
 
 class Collide:
@@ -129,7 +139,7 @@ class Player(game.sprite.Sprite):
                 if isinstance(entity, Wall):
                     if Collide.rect_and_wall(self.rect, entity):
                         move_back = True
-                elif isinstance(entity, Player):
+                elif isinstance(entity, (Player, Enemy)):
                     if self.rect.colliderect(entity.rect):
                         move_back = True
             if move_back:
@@ -166,9 +176,9 @@ class Enemy(game.sprite.Sprite):
 class Bullet(game.sprite.Sprite):
     def __init__(self, origin: tuple[int, int], target: tuple[int, int], hostile=False):
         game.sprite.Sprite.__init__(self)
-        self.origin = nparr(origin, dtype=float)
-        self.vector = nparr([target[0]-origin[0], target[1]-origin[1]], dtype=float)
-        self.vector = self.vector * BULLET_LENGTH / nplinalg.norm(self.vector)
+        self.origin = np_arr(origin, dtype=float)
+        self.vector = np_arr([target[0] - origin[0], target[1] - origin[1]], dtype=float)
+        self.vector = self.vector * BULLET_LENGTH / np_linalg.norm(self.vector)
         self.hostile = hostile
         self.color = "green"
         sounds["pew"].play()
@@ -299,6 +309,11 @@ def intersect(a, b, c, d) -> bool:
     return ccw(a, c, d) != ccw(b, c, d) and ccw(a, b, c) != ccw(a, b, d)
 
 
+# network
+server_ip = input("Enter server ip (leave blank for localhost): ") or "localhost"
+network = Network(server_ip, 9999)
+client_id = network.request_id()
+
 # Initialisation
 game.init()
 running = True
@@ -306,9 +321,8 @@ screen = game.display.set_mode(size=(WND_WIDTH, WND_HEIGHT))
 game.display.set_caption(GAME_TITLE)
 
 # Game objects
-network = Network("26.8.152.253", 9999)
 clock = game.time.Clock()
-player = Player(network.request_id())
+player = Player(client_id)
 entities = game.sprite.Group(player)
 
 # Resources
@@ -369,10 +383,11 @@ while running:
         if hasattr(entity, "image"):
             screen.blit(entity.image, entity.rect)
 
-    if network.idle is True:
-        network.send("idle:0")
+    if (network.idle is True) and server_ip != "0":
+        network.send("idle:")
 
     game.display.update()
     clock.tick(60)
 
+network.send("quit:")
 game.quit()
