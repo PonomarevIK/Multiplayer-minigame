@@ -33,32 +33,32 @@ class Network:
         self.idle = False
         try:
             self.socket.send(data)
-            self.process_response(self.socket.recv(1024).decode())
+            self.process_response(self.socket.recv(1024))
         except sock.error as error:
             print(error)
 
-    def process_response(self, data: str):
-        if data == "empty":
+    def process_response(self, data: bytes):
+        if data == b"empty":
             return
 
-        sender_id, action, action_data = data.split(":", maxsplit=2)
+        sender_id, action, action_data = data.split(b":", maxsplit=2)
         if sender_id not in self.other_players:
             self.other_players.append(sender_id)
             entities.add(Enemy(int(sender_id)))
 
-        if action == "idle":
+        if action == b"idle":
             return
-        elif action == "move":
-            pos_x, pos_y = action_data.split(",", maxsplit=1)
+        elif action == b"move":
+            pos_x, pos_y = action_data.decode().split(",", maxsplit=1)
             for entity in entities:
                 if isinstance(entity, Enemy) and entity.id == int(sender_id):
                     entity.move(int(pos_x), int(pos_y))
-        elif action == "shoot":
-            origin_x, origin_y, target_x, target_y = action_data.split(",", maxsplit=3)
+        elif action == b"shoot":
+            origin_x, origin_y, target_x, target_y = action_data.decode().split(",", maxsplit=3)
             entities.add(Bullet((int(origin_x), int(origin_y)),
                                 (int(target_x), int(target_y)), hostile=True))
-        elif action == "wall":
-            print("Wall")
+        elif action == b"wall":
+            entities.add(Wall.unpickle(action_data))
 
 
 class Collide:
