@@ -40,6 +40,9 @@ class Network:
             return
 
         sender_id, action, action_data = data.split(":", maxsplit=2)
+        if sender_id not in self.other_players:
+            self.other_players.append(sender_id)
+            entities.add(Enemy(int(sender_id)))
 
         if action == "idle":
             return
@@ -49,7 +52,7 @@ class Network:
                 if isinstance(entity, Enemy) and entity.id == int(sender_id):
                     entity.move(int(pos_x), int(pos_y))
         elif action == "shoot":
-            origin_x, origin_y, target_x, target_y = data.split(",", maxsplit=3)
+            origin_x, origin_y, target_x, target_y = action_data.split(",", maxsplit=3)
             entities.add(Bullet((int(origin_x), int(origin_y)),
                                 (int(target_x), int(target_y)), hostile=True))
         elif action == "wall":
@@ -79,7 +82,6 @@ class Collide:
             if intersect(line_start, line_end, node1.pos, node2.pos):
                 return True
         return False
-
 
 
 class Player(game.sprite.Sprite):
@@ -287,7 +289,7 @@ screen = game.display.set_mode(size=(WND_WIDTH, WND_HEIGHT))
 game.display.set_caption(GAME_TITLE)
 
 # Game objects
-network = Network("localhost", 9999)
+network = Network("26.8.152.253", 9999)
 clock = game.time.Clock()
 player = Player(network.request_id())
 entities = game.sprite.Group(player)
@@ -351,7 +353,7 @@ while running:
             screen.blit(entity.image, entity.rect)
 
     if network.idle is True:
-        network.send("idle")
+        network.send("idle:0")
 
     game.display.update()
     clock.tick(60)
