@@ -1,5 +1,3 @@
-import pickle
-
 import pygame as game
 from numpy import array as nparr
 from numpy import linalg as nplinalg
@@ -29,35 +27,35 @@ class Network:
         except sock.error as error:
             print(error)
 
-    def send(self, data: bytes):
+    def send(self, data: str):
         self.idle = False
         try:
-            self.socket.send(data)
-            self.process_response(self.socket.recv(1024))
+            self.socket.send(data.encode())
+            self.process_response(self.socket.recv(1024).decode())
         except sock.error as error:
             print(error)
 
-    def process_response(self, data: bytes):
-        if data == b"empty":
+    def process_response(self, data: str):
+        if data == "empty":
             return
 
-        sender_id, action, action_data = data.split(b":", maxsplit=2)
+        sender_id, action, action_data = data.split(":", maxsplit=2)
         if sender_id not in self.other_players:
             self.other_players.append(sender_id)
             entities.add(Enemy(int(sender_id)))
 
-        if action == b"idle":
+        if action == "idle":
             return
-        elif action == b"move":
-            pos_x, pos_y = action_data.decode().split(",", maxsplit=1)
+        elif action == "move":
+            pos_x, pos_y = action_data.split(",", maxsplit=1)
             for entity in entities:
                 if isinstance(entity, Enemy) and entity.id == int(sender_id):
                     entity.move(int(pos_x), int(pos_y))
-        elif action == b"shoot":
-            origin_x, origin_y, target_x, target_y = action_data.decode().split(",", maxsplit=3)
+        elif action == "shoot":
+            origin_x, origin_y, target_x, target_y = action_data.split(",", maxsplit=3)
             entities.add(Bullet((int(origin_x), int(origin_y)),
                                 (int(target_x), int(target_y)), hostile=True))
-        elif action == b"wall":
+        elif action == "wall":
             entities.add(Wall.unpickle(action_data))
 
 
@@ -137,7 +135,7 @@ class Player(game.sprite.Sprite):
             if move_back:
                 self.rect.move_ip(-x_velocity, -y_velocity)
             else:
-                network.send(f"move:{self.rect.x},{self.rect.y}".encode())
+                network.send(f"move:{self.rect.x},{self.rect.y}")
 
     def take_damage(self):
         self.health -= 1
@@ -150,7 +148,7 @@ class Player(game.sprite.Sprite):
         if (self.bullet_cooldown == 0) and (target != self.rect.center):
             self.bullet_cooldown = BULLET_COOLDOWN
             entities.add(Bullet(self.rect.center, target))
-            network.send(f"shoot:{self.rect.center[0]},{self.rect.center[1]},{target[0]},{target[1]}".encode())
+            network.send(f"shoot:{self.rect.center[0]},{self.rect.center[1]},{target[0]},{target[1]}")
 
 
 class Enemy(game.sprite.Sprite):
@@ -221,12 +219,17 @@ class Wall(game.sprite.Sprite):
     a deque for fast appends and pops"""
     @classmethod
     def unpickle(cls, pickled_wall):
-        new_deque = pickle.loads(pickled_wall)
-        new_wall = Wall(new_deque[0])
-        for node in new_deque[1:]:
-            new_wall.append(node)
+        def node_str_to_tuple(node_string):
+            x, _, y = node_string.partition(",")
+            return int(x), int(y)
+
+        nodes = pickled_wall.split(";")
+        new_wall = Wall(node_str_to_tuple(nodes[1]))
+        for node_str in new_wall[1:]:
+            new_wall.append(WallNode(node_str_to_tuple(node_str)))
         new_wall.activate(send_to_server=False)
         return new_wall
+
 
     def __init__(self, first_node: tuple[int, int]):
         game.sprite.Sprite.__init__(self)
@@ -272,7 +275,7 @@ class Wall(game.sprite.Sprite):
                     return
 
         if send_to_server:
-            network.send(b"wall:" + pickle.dumps(self.nodes))
+            network.send(f"wall:{';'.join(str(node.x)+','+str(node.y) for node in self.nodes)}")
 
     def update(self):
         if len(self.nodes) == 1:
@@ -367,7 +370,7 @@ while running:
             screen.blit(entity.image, entity.rect)
 
     if network.idle is True:
-        network.send(b"idle:0")
+        network.send("idle:0")
 
     game.display.update()
     clock.tick(60)
