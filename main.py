@@ -5,12 +5,13 @@ import math
 from collections import deque
 from itertools import pairwise
 from constants import *
-import socket as sock
+import socket
+import pickle
 
 
 class Network:
     def __init__(self, host="localhost", port=9999):
-        self.socket = sock.socket(sock.AF_INET, sock.SOCK_STREAM)
+        self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.host = host
         self.port = port
         self.address = (self.host, self.port)
@@ -27,43 +28,43 @@ class Network:
             self.socket.connect(self.address)
             print(f"Successfully connected to {self.host}:{self.port}")
             return self.socket.recv(1024).decode()
-        except sock.error as error:
+        except socket.error as error:
             print(error)
 
-    def send(self, data: str):
+    def send(self, data: bytes):
         if self.host == "0":
             return
 
         self.idle = False
         try:
-            self.socket.send(data.encode())
-            self.process_response(self.socket.recv(1024).decode())
-        except sock.error as error:
+            self.socket.send(data)
+            self.process_response(self.socket.recv(1024))
+        except socket.error as error:
             print(error)
 
-    def process_response(self, data: str):
-        if data == "empty":
+    def process_response(self, data: bytes):
+        if data == b"empty":
             return
 
-        sender_id, action, action_data = data.split(":", maxsplit=2)
+        sender_id, action, action_data = data.split(b":", maxsplit=2)
         if sender_id not in self.other_players:
             self.other_players.append(sender_id)
             entities.add(Enemy(int(sender_id)))
 
-        if action == "idle":
+        if action == b"idle":
             return
-        elif action == "move":
-            pos_x, pos_y = action_data.split(",", maxsplit=1)
+        elif action == b"move":
+            pos_x, pos_y = action_data.split(b",", maxsplit=1)
             for entity in entities:
                 if isinstance(entity, Enemy) and entity.id == int(sender_id):
                     entity.move(int(pos_x), int(pos_y))
-        elif action == "shoot":
-            origin_x, origin_y, target_x, target_y = action_data.split(",", maxsplit=3)
+        elif action == b"shoot":
+            origin_x, origin_y, target_x, target_y = action_data.split(b",", maxsplit=3)
             entities.add(Bullet((int(origin_x), int(origin_y)),
                                 (int(target_x), int(target_y)), hostile=True))
-        elif action == "wall":
+        elif action == b"wall":
             entities.add(Wall.unpickle(action_data))
-        elif action == "quit":
+        elif action == b"quit":
             for entity in entities:
                 if isinstance(entity, Enemy) and entity.id == int(sender_id):
                     entity.kill()
@@ -145,7 +146,7 @@ class Player(game.sprite.Sprite):
             if move_back:
                 self.rect.move_ip(-x_velocity, -y_velocity)
             else:
-                network.send(f"move:{self.rect.x},{self.rect.y}")
+                network.send(f"move:{self.rect.x},{self.rect.y}".encode())
 
     def take_damage(self):
         self.health -= 1
@@ -158,7 +159,7 @@ class Player(game.sprite.Sprite):
         if (self.bullet_cooldown == 0) and (target != self.rect.center):
             self.bullet_cooldown = BULLET_COOLDOWN
             entities.add(Bullet(self.rect.center, target))
-            network.send(f"shoot:{self.rect.center[0]},{self.rect.center[1]},{target[0]},{target[1]}")
+            network.send(f"shoot:{self.rect.center[0]},{self.rect.center[1]},{target[0]},{target[1]}".encode())
 
 
 class Enemy(game.sprite.Sprite):
@@ -229,14 +230,10 @@ class Wall(game.sprite.Sprite):
     a deque for fast appends and pops"""
     @classmethod
     def unpickle(cls, pickled_wall):
-        def node_str_to_tuple(node_string):
-            x, _, y = node_string.partition(",")
-            return int(x), int(y)
-
-        nodes = pickled_wall.split(";")
-        new_wall = Wall(node_str_to_tuple(nodes[1]))
-        for node_str in nodes[1:]:
-            new_wall.append(WallNode(node_str_to_tuple(node_str)))
+        nodes = pickle.loads(pickled_wall)
+        new_wall = Wall(nodes[0])
+        for node in nodes[1:]:
+            new_wall.append(node)
         new_wall.activate(send_to_server=False)
         return new_wall
 
@@ -285,7 +282,7 @@ class Wall(game.sprite.Sprite):
                     return
 
         if send_to_server:
-            network.send(f"wall:{';'.join(str(node.x)+','+str(node.y) for node in self.nodes)}")
+            network.send(b"wall:" + pickle.dumps(self.nodes))
 
     def update(self):
         if len(self.nodes) == 1:
@@ -384,10 +381,10 @@ while running:
             screen.blit(entity.image, entity.rect)
 
     if (network.idle is True) and server_ip != "0":
-        network.send("idle:")
+        network.send(b"idle:")
 
     game.display.update()
     clock.tick(60)
 
-network.send("quit:")
+network.send(b"quit:")
 game.quit()
