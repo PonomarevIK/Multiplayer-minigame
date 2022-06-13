@@ -3,7 +3,7 @@ from numpy import array as np_arr
 from numpy import linalg as np_linalg
 import math
 from collections import deque
-from itertools import pairwise
+from itertools import pairwise, islice
 from constants import *
 import socket
 import pickle
@@ -15,7 +15,6 @@ class Network:
         self.host = host
         self.port = port
         self.address = (self.host, self.port)
-        self.idle = True
         self.client_id = None
         self.other_players = []
 
@@ -103,7 +102,7 @@ class Player(game.sprite.Sprite):
         self.rect = self.image.get_rect(center=SPAWN_POSITIONS[self.id])
         self.health = 3
         self.bullet_cooldown = 0
-        self.wall = game.sprite.GroupSingle()
+        self.wall = None
 
     @property
     def is_alive(self) -> bool:
@@ -146,7 +145,7 @@ class Player(game.sprite.Sprite):
             if move_back:
                 self.rect.move_ip(-x_velocity, -y_velocity)
             else:
-                network.send(f"move:{self.rect.x},{self.rect.y}".encode())
+                message_buffer.append(f"move:{self.rect.x},{self.rect.y}".encode())
 
     def take_damage(self):
         self.health -= 1
@@ -159,7 +158,7 @@ class Player(game.sprite.Sprite):
         if (self.bullet_cooldown == 0) and (target != self.rect.center):
             self.bullet_cooldown = BULLET_COOLDOWN
             entities.add(Bullet(self.rect.center, target))
-            network.send(f"shoot:{self.rect.center[0]},{self.rect.center[1]},{target[0]},{target[1]}".encode())
+            message_buffer.append(f"shoot:{self.rect.center[0]},{self.rect.center[1]},{target[0]},{target[1]}".encode())
 
 
 class Enemy(game.sprite.Sprite):
@@ -230,17 +229,16 @@ class Wall(game.sprite.Sprite):
     a deque for fast appends and pops"""
     @classmethod
     def unpickle(cls, pickled_wall):
-        nodes = pickle.loads(pickled_wall)
-        new_wall = Wall(nodes[0])
-        for node in nodes[1:]:
+        pickled_nodes = pickle.loads(pickled_wall)
+        new_wall = Wall(pickled_nodes[0])
+        for node in islice(pickled_nodes, 1, None):
             new_wall.append(node)
         new_wall.activate(send_to_server=False)
         return new_wall
 
-
-    def __init__(self, first_node: tuple[int, int]):
+    def __init__(self, first_node: WallNode):
         game.sprite.Sprite.__init__(self)
-        self.nodes = deque((WallNode(first_node),))
+        self.nodes = deque((first_node,))
         self.total_length = 0.
         self.health = 2
         self.is_active = False
@@ -282,7 +280,7 @@ class Wall(game.sprite.Sprite):
                     return
 
         if send_to_server:
-            network.send(b"wall:" + pickle.dumps(self.nodes))
+            message_buffer.append(b"wall:" + pickle.dumps(self.nodes))
 
     def update(self):
         if len(self.nodes) == 1:
@@ -321,6 +319,7 @@ game.display.set_caption(GAME_TITLE)
 clock = game.time.Clock()
 player = Player(client_id)
 entities = game.sprite.Group(player)
+message_buffer = deque()
 
 # Resources
 heart = game.image.load("Graphics/heart.png")
@@ -333,7 +332,6 @@ sounds = {"pew": game.mixer.Sound("Sounds/pew.wav"),
 # Game Loop
 while running:
     screen.fill("white")
-    network.idle = True
 
     for event in game.event.get():
         if event.type == game.QUIT:
@@ -346,24 +344,24 @@ while running:
         elif event.type == game.MOUSEBUTTONDOWN:
             if event.button == 1:
                 if player.wall:
-                    player.wall.sprite.kill()
-                player.wall.add(Wall(event.pos))
-                entities.add(player.wall.sprite)
+                    player.wall.kill()
+                player.wall = Wall(WallNode(event.pos))
+                entities.add(player.wall)
             elif event.button == 3:
                 player.shoot(event.pos)
 
         elif event.type == game.MOUSEMOTION:
-            if player.wall and player.wall.sprite.drawing_mode:
-                player.wall.sprite.append(WallNode(event.pos))
+            if player.wall and player.wall.drawing_mode:
+                player.wall.append(WallNode(event.pos))
 
         elif event.type == game.MOUSEBUTTONUP:
             if event.button == 1:
-                if player.wall and player.wall.sprite.drawing_mode:
-                    player.wall.sprite.activate()
+                if player.wall and player.wall.drawing_mode:
+                    player.wall.activate()
 
         elif event.type == game.WINDOWLEAVE:
-            if player.wall and player.wall.sprite.drawing_mode:
-                player.wall.sprite.kill()
+            if player.wall and player.wall.drawing_mode:
+                player.wall.kill()
 
     # fps display
     fps_surf = font.render(f"{int(clock.get_fps())}", False, "black")
@@ -380,8 +378,11 @@ while running:
         if hasattr(entity, "image"):
             screen.blit(entity.image, entity.rect)
 
-    if (network.idle is True) and server_ip != "0":
+    if len(message_buffer) == 0:
         network.send(b"idle:")
+    else:
+        while message_buffer:
+            network.send(message_buffer.popleft())
 
     game.display.update()
     clock.tick(60)
