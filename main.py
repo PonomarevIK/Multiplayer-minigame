@@ -66,7 +66,7 @@ class Network:
             elif action == b"shoot":
                 origin_x, origin_y, target_x, target_y = action_data.split(b",", maxsplit=3)
                 entities.add(Bullet((int(origin_x), int(origin_y)),
-                                    (int(target_x), int(target_y)), is_hostile=True))
+                                    (int(target_x), int(target_y)), owner_id=int(sender_id)))
 
             elif action == b"damaged":
                 for entity in entities:
@@ -82,7 +82,7 @@ class Network:
                 for entity in entities:
                     if isinstance(entity, Wall) and entity.owner_id == int(sender_id):
                         entity.kill()
-                entities.add(Wall.unpickle(action_data, int(sender_id)))
+                entities.add(Wall.unpickle(action_data, owner_id=int(sender_id)))
 
             elif action == b"quit":
                 for entity in entities:
@@ -177,13 +177,14 @@ class Player(game.sprite.Sprite):
         message_buffer.append(b"damaged:")
         sounds["player_damage"].play()
         if not self.is_alive:
+            message_buffer.append(b"quit:")
             self.kill()
 
     def shoot(self, target: tuple[int, int]):
         #   cooldown time is over           otherwise vector would be of length 0
         if (self.bullet_cooldown == 0) and (target != self.rect.center):
             self.bullet_cooldown = BULLET_COOLDOWN
-            entities.add(Bullet(self.rect.center, target))
+            entities.add(Bullet(self.rect.center, target, owner_id=self.id))
             message_buffer.append(f"shoot:{self.rect.center[0]},{self.rect.center[1]},{target[0]},{target[1]}".encode())
 
 
@@ -206,16 +207,16 @@ class Enemy(Player):
 
 
 class Bullet(game.sprite.Sprite):
-    def __init__(self, origin: tuple[int, int], target: tuple[int, int], is_hostile=False):
+    def __init__(self, origin: tuple[int, int], target: tuple[int, int], owner_id: int = None):
         game.sprite.Sprite.__init__(self)
         self.origin = np_arr(origin, dtype=float)
         self.vector = np_arr([target[0] - origin[0], target[1] - origin[1]], dtype=float)
         self.vector = self.vector * BULLET_LENGTH / np_linalg.norm(self.vector)
-        self.is_hostile = is_hostile
+        self.owner_id = owner_id
         sounds["pew"].play()
 
     def update(self):
-        game.draw.line(screen, color="red" if self.is_hostile else "green",
+        game.draw.line(screen, color="green" if (self.owner_id == player.id) else "red",
                        start_pos=self.origin, end_pos=self.origin+self.vector, width=7)
         self.origin += BULLET_SPEED * self.vector
         if not screen.get_rect().collidepoint(tuple(self.origin)):
@@ -227,9 +228,9 @@ class Bullet(game.sprite.Sprite):
                 # upon hitting a wall bullet bounces and becomes hostile - now it can also damage the shooter
                 entity.take_damage()
                 self.vector = -self.vector
-                self.is_hostile = True
-            elif (entity is player) and self.is_hostile and Collide.rect_and_line(entity.rect, tuple(self.origin),
-                                                                                  tuple(self.origin + self.vector)):
+                self.owner_id = None
+            elif isinstance(entity, Player) and self.owner_id != entity.id and \
+                    Collide.rect_and_line(entity.rect, tuple(self.origin), tuple(self.origin + self.vector)):
                 self.kill()
                 entity.take_damage()
 
