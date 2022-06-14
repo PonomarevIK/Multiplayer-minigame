@@ -3,7 +3,7 @@ from numpy import array as np_arr
 from numpy import linalg as np_linalg
 import math
 from collections import deque
-from itertools import pairwise, islice
+from itertools import pairwise
 from constants import *
 import socket
 import pickle
@@ -74,11 +74,13 @@ class Network:
                         entity.take_damage()
 
             elif action == b"wall":
+                new_wall = Wall.unpickle(action_data)
                 for entity in entities:
-                    if isinstance(entity, Enemy) and entity.id == int(sender_id) and entity.wall:
-                        entity.wall.kill()
-                        break
-                entities.add(Wall.unpickle(action_data))
+                    if isinstance(entity, Enemy) and entity.id == int(sender_id):
+                        if entity.wall:
+                            entity.wall.kill()
+                        entity.wall = new_wall
+                entities.add(new_wall)
 
             elif action == b"quit":
                 for entity in entities:
@@ -251,11 +253,11 @@ class Wall(game.sprite.Sprite):
     and deleted from another forming a line of set max length that follows their cursor. Thus, nodes are stored in
     a deque for fast appends and pops"""
     @classmethod
-    def unpickle(cls, pickled_wall):
+    def unpickle(cls, pickled_wall: bytes):
         pickled_nodes = pickle.loads(pickled_wall)
-        new_wall = Wall(pickled_nodes[0])
-        for node in islice(pickled_nodes, 1, None):
-            new_wall.append(node)
+        new_wall = Wall(WallNode(pickled_nodes[0]))
+        for node in pickled_nodes[1:]:
+            new_wall.append(WallNode(node))
         new_wall.activate(send_to_server=False)
         return new_wall
 
@@ -303,7 +305,7 @@ class Wall(game.sprite.Sprite):
                     self.kill(silent=False)
                     return
         if send_to_server:
-            message_buffer.append(b"wall:" + pickle.dumps(self.nodes))
+            message_buffer.append(b"wall:" + pickle.dumps(tuple((node.x, node.y) for node in self.nodes)))
 
     def update(self):
         if len(self.nodes) == 1:
