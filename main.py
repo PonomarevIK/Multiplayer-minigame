@@ -26,7 +26,7 @@ class Network:
         try:
             self.socket.connect(self.address)
             print(f"Successfully connected to {self.host}:{self.port}")
-            return self.socket.recv(1024).decode()
+            return self.socket.recv(8192).decode()
         except socket.error as error:
             print(error)
 
@@ -36,13 +36,7 @@ class Network:
 
         try:
             self.socket.sendall(data)
-            packets = []
-            while True:
-                packet = self.socket.recv(1024)
-                if not packet:
-                    break
-                packets.append(packet)
-            self.process_response(b"".join(packets))
+            self.process_response(self.socket.recv(8192))
         except socket.error as error:
             print(error)
 
