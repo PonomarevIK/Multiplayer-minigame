@@ -19,7 +19,7 @@ class Network:
         self.other_players = []
 
     def request_id(self) -> str:
-        if self.host == "0":  # offline mode
+        if self.host == "0":  # offline mode for testing
             return "0"
 
         print("Connecting...")
@@ -31,10 +31,9 @@ class Network:
             print(error)
 
     def send(self, data: bytes):
-        if self.host == "0":
+        if self.host == "0":  # offline mode for testing
             return
 
-        self.idle = False
         try:
             self.socket.send(data)
             self.process_response(self.socket.recv(1024))
@@ -42,31 +41,36 @@ class Network:
             print(error)
 
     def process_response(self, data: bytes):
-        if data == b"empty":
+        """Responses from server come in a form of player_id-action1:action1_data;action2:action2_data ..."""
+        if data == b"empty":  # if there are no other players
             return
 
-        sender_id, action, action_data = data.split(b":", maxsplit=2)
-        if sender_id not in self.other_players:
-            self.other_players.append(sender_id)
-            entities.add(Enemy(int(sender_id)))
+        sender_id, _, actions = data.partition(b"-")
+        for message in actions.split(b";"):
+            action, _, action_data = message.partition(b":")
 
-        if action == b"idle":
-            return
-        elif action == b"move":
-            pos_x, pos_y = action_data.split(b",", maxsplit=1)
-            for entity in entities:
-                if isinstance(entity, Enemy) and entity.id == int(sender_id):
-                    entity.move(int(pos_x), int(pos_y))
-        elif action == b"shoot":
-            origin_x, origin_y, target_x, target_y = action_data.split(b",", maxsplit=3)
-            entities.add(Bullet((int(origin_x), int(origin_y)),
-                                (int(target_x), int(target_y)), hostile=True))
-        elif action == b"wall":
-            entities.add(Wall.unpickle(action_data))
-        elif action == b"quit":
-            for entity in entities:
-                if isinstance(entity, Enemy) and entity.id == int(sender_id):
-                    entity.kill()
+            if action == b"idle":
+                return
+            elif action == b"joined":
+                entities.add(Enemy(sender_id))
+            elif action == b"move":
+                pos_x, _, pos_y = action_data.partition(b",")
+                for entity in entities:
+                    if isinstance(entity, Enemy) and entity.id == int(sender_id):
+                        entity.move(int(pos_x), int(pos_y))
+                        break
+            elif action == b"shoot":
+                origin_x, origin_y, target_x, target_y = action_data.split(b",", maxsplit=3)
+                entities.add(Bullet((int(origin_x), int(origin_y)),
+                                    (int(target_x), int(target_y)), is_hostile=True))
+            elif action == b"wall":
+                entities.add(Wall.unpickle(action_data))
+            elif action == b"quit":
+                for entity in entities:
+                    if isinstance(entity, Enemy) and entity.id == int(sender_id):
+                        print(f"Player #{sender_id!s} left the game")
+                        entity.kill()
+                        break
 
 
 class Collide:
@@ -139,9 +143,11 @@ class Player(game.sprite.Sprite):
                 if isinstance(entity, Wall):
                     if Collide.rect_and_wall(self.rect, entity):
                         move_back = True
-                elif isinstance(entity, (Player, Enemy)):
+                        break
+                elif isinstance(entity, Player):
                     if self.rect.colliderect(entity.rect):
                         move_back = True
+                        break
             if move_back:
                 self.rect.move_ip(-x_velocity, -y_velocity)
             else:
@@ -161,10 +167,9 @@ class Player(game.sprite.Sprite):
             message_buffer.append(f"shoot:{self.rect.center[0]},{self.rect.center[1]},{target[0]},{target[1]}".encode())
 
 
-class Enemy(game.sprite.Sprite):
+class Enemy(Player):
     def __init__(self, id):
-        game.sprite.Sprite.__init__(self)
-        self.id = id
+        Player.__init__(self, id)
         self.image = game.image.load("graphics/enemy.png")
         self.rect = self.image.get_rect(center=SPAWN_POSITIONS[self.id])
         self.health = 3
@@ -172,39 +177,40 @@ class Enemy(game.sprite.Sprite):
     def move(self, x, y):
         self.rect.move_ip(x - self.rect.x, y - self.rect.y)
 
+    def update(self):
+        game.sprite.Sprite.update(self)
+
 
 class Bullet(game.sprite.Sprite):
-    def __init__(self, origin: tuple[int, int], target: tuple[int, int], hostile=False):
+    def __init__(self, origin: tuple[int, int], target: tuple[int, int], is_hostile=False):
         game.sprite.Sprite.__init__(self)
         self.origin = np_arr(origin, dtype=float)
         self.vector = np_arr([target[0] - origin[0], target[1] - origin[1]], dtype=float)
         self.vector = self.vector * BULLET_LENGTH / np_linalg.norm(self.vector)
-        self.hostile = hostile
-        self.color = "green"
+        self.is_hostile = is_hostile
         sounds["pew"].play()
 
     def update(self):
-        game.draw.line(screen, color=self.color, start_pos=self.origin, end_pos=self.origin+self.vector, width=7)
+        game.draw.line(screen, color="red" if self.is_hostile else "green",
+                       start_pos=self.origin, end_pos=self.origin+self.vector, width=7)
         self.origin += BULLET_SPEED * self.vector
         if not screen.get_rect().collidepoint(tuple(self.origin)):
             self.kill()
 
         for entity in entities:
             if isinstance(entity, Wall):
-                # upon hitting a wall bullet bounces and becomes hostile - now it can also damage the shoote
-                if Collide.wall_and_line(entity, tuple(self.origin), tuple(self.origin+self.vector)):
-                    entity.take_damage()
-                    self.vector = -self.vector
-                    self.hostile = True
-                    self.color = "red"
+                if not Collide.wall_and_line(entity, tuple(self.origin), tuple(self.origin+self.vector)):
+                    continue
+                # upon hitting a wall bullet bounces and becomes hostile - now it can also damage the shooter
+                entity.take_damage()
+                self.vector = -self.vector
+                self.is_hostile = True
             elif isinstance(entity, Player):
-                if self.hostile and Collide.rect_and_line(entity.rect, tuple(self.origin),
-                                                          tuple(self.origin+self.vector)):
-                    self.kill()
+                if not Collide.rect_and_line(entity.rect, tuple(self.origin), tuple(self.origin + self.vector)):
+                    continue
+                self.kill()
+                if isinstance(entity, Enemy) or self.is_hostile:
                     entity.take_damage()
-            elif isinstance(entity, Enemy):
-                if Collide.rect_and_line(entity.rect, tuple(self.origin), tuple(self.origin + self.vector)):
-                    self.kill()
 
 
 class WallNode:
@@ -257,6 +263,7 @@ class Wall(game.sprite.Sprite):
         if not silent:
             sounds["wall_break"].play()
         game.sprite.Sprite.kill(self)
+        player.wall = None
 
     def take_damage(self):
         self.health -= 1
@@ -274,11 +281,10 @@ class Wall(game.sprite.Sprite):
             self.kill(silent=True)
             return
         for entity in entities:
-            if isinstance(entity, Player) or isinstance(entity, Enemy):
+            if isinstance(entity, Player):
                 if Collide.rect_and_wall(entity.rect, self):
                     self.kill(silent=False)
                     return
-
         if send_to_server:
             message_buffer.append(b"wall:" + pickle.dumps(self.nodes))
 
@@ -332,6 +338,7 @@ sounds = {"pew": game.mixer.Sound("Sounds/pew.wav"),
 # Game Loop
 while running:
     screen.fill("white")
+    message_buffer.clear()
 
     for event in game.event.get():
         if event.type == game.QUIT:
@@ -372,7 +379,7 @@ while running:
     for i in range(player.health):
         screen.blit(heart, heart.get_rect(topright=(WND_WIDTH - i * heart.get_width(), 0)))
 
-    # update all entities
+    # update and draw all entities
     entities.update()
     for entity in entities:
         if hasattr(entity, "image"):
@@ -381,8 +388,7 @@ while running:
     if len(message_buffer) == 0:
         network.send(b"idle:")
     else:
-        while message_buffer:
-            network.send(message_buffer.popleft())
+        network.send(b";".join(message_buffer))
 
     game.display.update()
     clock.tick(60)
