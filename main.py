@@ -1,11 +1,9 @@
-import sys
-
 import pygame as game
 from numpy import array as np_arr
 from numpy import linalg as np_linalg
 import math
 from collections import deque
-from itertools import pairwise
+from itertools import pairwise, islice
 from constants import *
 import socket
 import pickle
@@ -46,7 +44,7 @@ class Network:
             print(error)
 
     def process_response(self, data: bytes):
-        """Responses from server come in a form of player_id-action1:action1_data;action2:action2_data ..."""
+        """Responses from server come in a form of player_id-action1:action1_data>>>action2:action2_data ..."""
         if data == b"empty":  # if there are no other players
             return
 
@@ -55,7 +53,7 @@ class Network:
             self.other_players.append(sender_id)
             entities.add(Enemy(sender_id))
 
-        for message in actions.split(b";"):
+        for message in actions.split(b">>>"):
             action, _, action_data = message.partition(b":")
 
             if action == b"idle":
@@ -80,16 +78,14 @@ class Network:
 
             elif action == b"wall_break":
                 for entity in entities:
-                    if isinstance(entity, Enemy) and entity.id == int(sender_id) and entity.wall:
-                        entity.wall.kill()
-                        entity.wall = None
+                    if isinstance(entity, Wall) and entity.owner_id == int(sender_id):
+                        entity.kill()
 
             elif action == b"wall":
-                new_wall = Wall.unpickle(action_data)
                 for entity in entities:
-                    if isinstance(entity, Enemy) and entity.id == int(sender_id):
-                        entity.wall = new_wall
-                entities.add(new_wall)
+                    if isinstance(entity, Wall) and entity.owner_id == int(sender_id):
+                        entity.kill()
+                entities.add(Wall.unpickle(action_data, int(sender_id)))
 
             elif action == b"quit":
                 for entity in entities:
@@ -262,22 +258,22 @@ class Wall(game.sprite.Sprite):
     and deleted from another forming a line of set max length that follows their cursor. Thus, nodes are stored in
     a deque for fast appends and pops"""
     @classmethod
-    def unpickle(cls, pickled_wall: bytes):
-        pickled_nodes = pickle.loads(pickled_wall)
-        new_wall = Wall(WallNode(pickled_nodes[0]))
-        for node in pickled_nodes[1:]:
-            new_wall.append(WallNode(node))
-        new_wall.activate(send_to_server=False)
+    def unpickle(cls, pickled_wall: bytes, owner_id: int):
+        unpickled_nodes = pickle.loads(pickled_wall)
+        new_wall = Wall(unpickled_nodes[0], owner_id)
+        for node in islice(unpickled_nodes, 1, None):
+            new_wall.append(node)
+        new_wall.activate()
         return new_wall
 
-    def __init__(self, first_node: WallNode):
+    def __init__(self, first_node: WallNode, owner_id: int):
         game.sprite.Sprite.__init__(self)
         self.nodes = deque((first_node,))
         self.total_length = 0.
         self.health = 2
         self.is_active = False
         self.drawing_mode = True
-        self.color = WALL_COLOR_INACTIVE
+        self.owner_id = owner_id
 
     def append(self, new_node: WallNode):
         self.nodes[-1].dist_to_next = math.dist(self.nodes[-1].pos, new_node.pos)
@@ -291,7 +287,6 @@ class Wall(game.sprite.Sprite):
         if not silent:
             sounds["wall_break"].play()
         if self is player.wall:
-            player.wall = None
             message_buffer.append(b"wall_break:")
         game.sprite.Sprite.kill(self)
 
@@ -302,10 +297,9 @@ class Wall(game.sprite.Sprite):
         else:
             self.kill(silent=False)
 
-    def activate(self, send_to_server=True):
+    def activate(self):
         self.drawing_mode = False
         self.is_active = True
-        self.color = WALL_COLOR_ACTIVE
         self.rect = self.get_rect()
         if len(self.nodes) < 2:
             self.kill(silent=True)
@@ -315,15 +309,16 @@ class Wall(game.sprite.Sprite):
                 if Collide.rect_and_wall(entity.rect, self):
                     self.kill()
                     return
-        if send_to_server:
-            message_buffer.append(b"wall:" + pickle.dumps(tuple((node.x, node.y) for node in self.nodes)))
+        if self is player.wall:
+            message_buffer.append(b"wall:" + pickle.dumps(self.nodes))
 
     def update(self):
         if len(self.nodes) == 1:
-            game.draw.circle(screen, color=self.color, center=self.nodes[0].pos, radius=3)
+            game.draw.circle(screen, color=WALL_COLOR_INACTIVE, center=self.nodes[0].pos, radius=3)
         else:
             for node1, node2 in pairwise(self.nodes):
-                game.draw.line(screen, color=self.color, start_pos=node1.pos, end_pos=node2.pos, width=7)
+                game.draw.line(screen, color=WALL_COLOR_ACTIVE if self.is_active else WALL_COLOR_INACTIVE,
+                               start_pos=node1.pos, end_pos=node2.pos, width=7)
 
     def get_rect(self):
         min_x = min(node.x for node in self.nodes)
@@ -382,7 +377,7 @@ while running:
             if event.button == 1:
                 if player.wall:
                     player.wall.kill()
-                player.wall = Wall(WallNode(event.pos))
+                player.wall = Wall(WallNode(event.pos), player.id)
                 entities.add(player.wall)
             elif event.button == 3:
                 player.shoot(event.pos)
@@ -418,7 +413,7 @@ while running:
     if len(message_buffer) == 0:
         network.send(b"idle:")
     else:
-        network.send(b";".join(message_buffer))
+        network.send(b">>>".join(message_buffer))
 
     game.display.update()
     clock.tick(60)
