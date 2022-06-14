@@ -20,7 +20,13 @@ def client_thread(connection, address, client_id):
 
     while True:
         try:
-            data = connection.recv(8192)
+            packets = []
+            while True:
+                packet = connection.recv(1024)
+                if not packet:
+                    break
+                packets.append(packet)
+            data = b"".join(packet)
             if not data:
                 break
             if len(client_last_message) == 1:
