@@ -29,7 +29,7 @@ def client_thread(connection, address, client_id):
             client_last_message[client_id] = data
             for id, message in client_last_message.items():
                 if id != client_id:
-                    connection.send(f"{id}:".encode() + message)
+                    connection.send(f"{id}-".encode() + message)
         except socket.error as error:
             print(error)
             break
