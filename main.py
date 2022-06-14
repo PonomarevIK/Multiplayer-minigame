@@ -1,3 +1,5 @@
+import sys
+
 import pygame as game
 from numpy import array as np_arr
 from numpy import linalg as np_linalg
@@ -26,7 +28,7 @@ class Network:
         try:
             self.socket.connect(self.address)
             print(f"Successfully connected to {self.host}:{self.port}")
-            return self.socket.recv(4096).decode()
+            return self.socket.recv(1024).decode()
         except socket.error as error:
             print(error)
 
@@ -34,9 +36,12 @@ class Network:
         if self.host == "0":  # offline mode for testing
             return
 
+        # if b"wall" in data:
+        #     print(f"sent {data} of size {sys.getsizeof(data)}")
+
         try:
             self.socket.send(data)
-            self.process_response(self.socket.recv(4096))
+            self.process_response(self.socket.recv(1024))
         except socket.error as error:
             print(error)
 
@@ -73,12 +78,16 @@ class Network:
                     if isinstance(entity, Enemy) and entity.id == int(sender_id):
                         entity.take_damage()
 
+            elif action == b"wall_break":
+                for entity in entities:
+                    if isinstance(entity, Enemy) and entity.id == int(sender_id) and entity.wall:
+                        entity.wall.kill()
+                        entity.wall = None
+
             elif action == b"wall":
                 new_wall = Wall.unpickle(action_data)
                 for entity in entities:
                     if isinstance(entity, Enemy) and entity.id == int(sender_id):
-                        if entity.wall:
-                            entity.wall.kill()
                         entity.wall = new_wall
                 entities.add(new_wall)
 
@@ -281,8 +290,10 @@ class Wall(game.sprite.Sprite):
     def kill(self, silent=False):
         if not silent:
             sounds["wall_break"].play()
+        if self is player.wall:
+            player.wall = None
+            message_buffer.append(b"wall_break:")
         game.sprite.Sprite.kill(self)
-        player.wall = None
 
     def take_damage(self):
         self.health -= 1
@@ -302,7 +313,7 @@ class Wall(game.sprite.Sprite):
         for entity in entities:
             if isinstance(entity, Player):
                 if Collide.rect_and_wall(entity.rect, self):
-                    self.kill(silent=False)
+                    self.kill()
                     return
         if send_to_server:
             message_buffer.append(b"wall:" + pickle.dumps(tuple((node.x, node.y) for node in self.nodes)))
