@@ -20,7 +20,13 @@ def client_thread(connection, address, client_id):
 
     while True:
         try:
-            data = connection.recv(1024)
+            packets = []
+            while True:
+                packet = connection.recv(1024)
+                if not packet:
+                    break
+                packets.append(packet)
+            data = b"".join(packet)
             if not data:
                 break
             if len(client_last_message) == 1:
@@ -29,7 +35,7 @@ def client_thread(connection, address, client_id):
             client_last_message[client_id] = data
             for id, message in client_last_message.items():
                 if id != client_id:
-                    connection.send(f"{id}-".encode() + message)
+                    connection.sendall(f"{id}-".encode() + message)
         except socket.error as error:
             print(error)
             break

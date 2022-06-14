@@ -35,7 +35,7 @@ class Network:
             return
 
         try:
-            self.socket.send(data)
+            self.socket.sendall(data)
             response = []
             while True:
                 packet = self.socket.recv(1024)
