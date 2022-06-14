@@ -26,7 +26,7 @@ class Network:
         try:
             self.socket.connect(self.address)
             print(f"Successfully connected to {self.host}:{self.port}")
-            return self.socket.recv(1024).decode()
+            return self.socket.recv(4096).decode()
         except socket.error as error:
             print(error)
 
@@ -34,12 +34,9 @@ class Network:
         if self.host == "0":  # offline mode for testing
             return
 
-        # if b"wall" in data:
-        #     print(f"sent {data} of size {sys.getsizeof(data)}")
-
         try:
             self.socket.send(data)
-            self.process_response(self.socket.recv(1024))
+            self.process_response(self.socket.recv(4096))
         except socket.error as error:
             print(error)
 
@@ -90,7 +87,7 @@ class Network:
             elif action == b"quit":
                 for entity in entities:
                     if isinstance(entity, Enemy) and entity.id == int(sender_id):
-                        print(f"Player #{sender_id!s} left the game")
+                        print(f"Player #{int(sender_id)} left the game")
                         entity.kill()
                         break
 
@@ -283,11 +280,13 @@ class Wall(game.sprite.Sprite):
             self.total_length -= self.nodes[0].dist_to_next
             self.nodes.popleft()
 
-    def kill(self, silent=False):
+    def kill(self, silent=False, damaged=False):
         if not silent:
             sounds["wall_break"].play()
         if self is player.wall:
-            message_buffer.append(b"wall_break:")
+            player.wall = None
+            if not damaged:
+                message_buffer.append(b"wall_break:")
         game.sprite.Sprite.kill(self)
 
     def take_damage(self):
@@ -295,7 +294,7 @@ class Wall(game.sprite.Sprite):
         if self.health > 0:
             sounds["wall_hit"].play()
         else:
-            self.kill(silent=False)
+            self.kill(silent=False, damaged=True)
 
     def activate(self):
         self.drawing_mode = False
