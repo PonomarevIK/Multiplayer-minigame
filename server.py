@@ -15,7 +15,7 @@ sock.listen(max_connections)
 
 
 def client_thread(connection, address, client_id):
-    client_last_message[client_id] = b"idle:0"
+    client_last_message[client_id] = b"joined:0"
     connection.send(str(client_id).encode())
 
     while True:
