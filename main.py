@@ -36,13 +36,14 @@ class Network:
 
         try:
             self.socket.sendall(data)
-            packets = []
+            response = []
             while True:
                 packet = self.socket.recv(1024)
                 if not packet:
                     break
-                packets.append(packet)
-            self.process_response(b"".join(packets))
+                response.append(packet)
+
+            self.process_response(b"".join(response))
         except socket.error as error:
             print(error)
 
