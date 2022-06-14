@@ -3,7 +3,7 @@ import threading
 
 client_last_message = {}
 current_client_id = 0
-max_connections = 2
+max_connections = 4
 
 sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 

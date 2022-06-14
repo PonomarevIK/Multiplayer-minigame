@@ -55,18 +55,31 @@ class Network:
 
             if action == b"idle":
                 return
+
             elif action == b"move":
                 pos_x, _, pos_y = action_data.partition(b",")
                 for entity in entities:
                     if isinstance(entity, Enemy) and entity.id == int(sender_id):
                         entity.move(int(pos_x), int(pos_y))
                         break
+
             elif action == b"shoot":
                 origin_x, origin_y, target_x, target_y = action_data.split(b",", maxsplit=3)
                 entities.add(Bullet((int(origin_x), int(origin_y)),
                                     (int(target_x), int(target_y)), is_hostile=True))
+
+            elif action == b"damaged":
+                for entity in entities:
+                    if isinstance(entity, Enemy) and entity.id == int(sender_id):
+                        entity.take_damage()
+
             elif action == b"wall":
+                for entity in entities:
+                    if isinstance(entity, Enemy) and entity.id == int(sender_id) and entity.wall:
+                        entity.wall.kill()
+                        break
                 entities.add(Wall.unpickle(action_data))
+
             elif action == b"quit":
                 for entity in entities:
                     if isinstance(entity, Enemy) and entity.id == int(sender_id):
@@ -157,6 +170,7 @@ class Player(game.sprite.Sprite):
 
     def take_damage(self):
         self.health -= 1
+        message_buffer.append(b"damaged:")
         sounds["player_damage"].play()
         if not self.is_alive:
             self.kill()
@@ -174,13 +188,17 @@ class Enemy(Player):
         Player.__init__(self, id)
         self.image = game.image.load("graphics/enemy.png")
         self.rect = self.image.get_rect(center=SPAWN_POSITIONS[self.id])
-        self.health = 3
 
     def move(self, x, y):
         self.rect.move_ip(x - self.rect.x, y - self.rect.y)
 
     def update(self):
         game.sprite.Sprite.update(self)
+
+    def take_damage(self):
+        sounds["player_damage"].play()
+        if not self.is_alive:
+            self.kill()
 
 
 class Bullet(game.sprite.Sprite):
@@ -200,19 +218,16 @@ class Bullet(game.sprite.Sprite):
             self.kill()
 
         for entity in entities:
-            if isinstance(entity, Wall):
-                if not Collide.wall_and_line(entity, tuple(self.origin), tuple(self.origin+self.vector)):
-                    continue
+            if isinstance(entity, Wall) and Collide.wall_and_line(entity, tuple(self.origin),
+                                                                  tuple(self.origin+self.vector)):
                 # upon hitting a wall bullet bounces and becomes hostile - now it can also damage the shooter
                 entity.take_damage()
                 self.vector = -self.vector
                 self.is_hostile = True
-            elif isinstance(entity, Player):
-                if not Collide.rect_and_line(entity.rect, tuple(self.origin), tuple(self.origin + self.vector)):
-                    continue
+            elif (entity is player) and self.is_hostile and Collide.rect_and_line(entity.rect, tuple(self.origin),
+                                                                                  tuple(self.origin + self.vector)):
                 self.kill()
-                if isinstance(entity, Enemy) or self.is_hostile:
-                    entity.take_damage()
+                entity.take_damage()
 
 
 class WallNode:
